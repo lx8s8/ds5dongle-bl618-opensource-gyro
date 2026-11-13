@@ -8,6 +8,7 @@
 #include "config.h"
 #include "state_mgr.h"
 #include "remap.h"
+#include "gyro_runtime.h"
 #include "usbd_core.h"
 #include "usbd_hid.h"
 #include "bl616_glb.h"
@@ -23,14 +24,14 @@
 
 #if defined(BOARD_LCTECH_616)
   #ifdef FORCE_FS_MODE
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G1"
   #else
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18H"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G1H"
   #endif
 #elif defined(BOARD_M0S_DOCK)
-#define FIRMWARE_VERSION "M0S-DS5 3.5"
+#define FIRMWARE_VERSION "M0S-DS5 3.5G1"
 #else
-#define FIRMWARE_VERSION "BL618-DS5 3.5"
+#define FIRMWARE_VERSION "BL618-DS5 3.5G1"
 #endif
 
 #define USBD_MAX_POWER      250
@@ -41,8 +42,8 @@
 #define USB_HID_ONLY_SIZE (9 + 9 + 7 + USB_KBD_DESC_SIZE)
 #define USB_AUDIO_DESC_SIZE 186
 #define USB_HID_CONFIG_SIZE (9 + USB_AUDIO_DESC_SIZE + USB_HID_ONLY_SIZE)
-#define HID_REPORT_DESC_SIZE_DS  329
-#define HID_REPORT_DESC_SIZE_DSE 445
+#define HID_REPORT_DESC_SIZE_DS  345
+#define HID_REPORT_DESC_SIZE_DSE 461
 #define KBD_REPORT_DESC_SIZE 138  /* Keyboard + Consumer + Mouse */
 
 static bool current_dse_mode = false;
@@ -240,6 +241,9 @@ static const uint8_t hid_report_desc_ds[HID_REPORT_DESC_SIZE_DS] = {
     0x95, 0x7F,       /*   Report Count (127) — 31 entries * 4 + header */
     0xB1, 0x02,
 
+    0x85, 0xFC, 0x09, 0x3D, 0x95, 0x3F, 0xB1, 0x02, /* gyro config */
+    0x85, 0xFD, 0x09, 0x3E, 0x95, 0x3F, 0xB1, 0x02, /* gyro telemetry */
+
     0xC0,             /* End Collection */
 };
 
@@ -313,6 +317,8 @@ static const uint8_t hid_report_desc_dse[HID_REPORT_DESC_SIZE_DSE] = {
     0x85, 0xF8, 0x09, 0x39, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xF9, 0x09, 0x3A, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xFB, 0x09, 0x3C, 0x95, 0x7F, 0xB1, 0x02,  /* button remap table (127B) */
+    0x85, 0xFC, 0x09, 0x3D, 0x95, 0x3F, 0xB1, 0x02,
+    0x85, 0xFD, 0x09, 0x3E, 0x95, 0x3F, 0xB1, 0x02,
     0xC0,
 };
 
@@ -776,6 +782,10 @@ void usb_gamepad_process_deferred(void)
     set_report_entry_t entry;
     while (set_report_queue &&
            xQueueReceive(set_report_queue, &entry, 0) == pdTRUE) {
+        if (entry.report_id == GYRO_REPORT_CONFIG) {
+            gyro_runtime_command(entry.data, entry.len);
+            continue;
+        }
         LOG_INF("[USB] Deferred SET_REPORT(0x%02x) → BT, %u bytes%s\n",
                entry.report_id, entry.len, entry.is_dse ? " (DSE)" : "");
         bt_hid_host_set_feature_crc(entry.report_id, entry.data, entry.len);
@@ -801,14 +811,12 @@ int usb_gamepad_init(usb_gamepad_output_cb_t output_cb)
     LOG_INF("[USB-INIT] Audio desc injected: %u bytes at offset %d\n",
            audio_len, AUDIO_DESC_OFFSET);
 
-    /* Include keyboard interface ONLY when ps_shortcut needs to send key combos.
-     * enable_wake now uses USB remote-wake signal only (F15 key removed) —
-     * no keyboard interface needed. remap KBD type is disabled for now.
-     * REMOTE-WAKEUP bit stays in bmAttributes when wake is enabled. */
-    const bool need_kbd = remap_has_kbd_targets() ||
-                          config_get()->ps_shortcut_enabled ||
-                          (config_get()->tp_mode == 2 || config_get()->tp_mode == 3);
-    const bool need_remote_wake = config_get()->enable_wake || need_kbd;
+    /* Runtime gyro/remap changes can enable mouse or keyboard at any time.
+     * Keep the composite interface enumerated so applying config needs no reset. */
+    const bool need_kbd = true;
+    const bool need_remote_wake = config_get()->enable_wake ||
+        remap_has_kbd_targets() || config_get()->ps_shortcut_enabled ||
+        config_get()->tp_mode == 2 || config_get()->tp_mode == 3;
     if (need_kbd) {
         config_desc[KBD_SUBCLASS_OFF] = 0x00; /* No subclass (multi-TLC, not pure boot) */
         config_desc[KBD_PROTOCOL_OFF] = 0x00; /* None — keyboard + consumer control */
@@ -1043,7 +1051,8 @@ static uint8_t kbd_idle_report[USB_KBD_EP_MPS];
 
 static bool is_dongle_cmd(uint8_t report_id)
 {
-    return (report_id >= 0xF6 && report_id <= 0xF9) || report_id == 0xFB;
+    return (report_id >= 0xF6 && report_id <= 0xF9) || report_id == 0xFB ||
+           report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS;
 }
 
 /*
@@ -1148,7 +1157,14 @@ void usbd_hid_get_report(uint8_t busid, uint8_t intf, uint8_t report_id,
     if (is_dongle_cmd(report_id)) {
         feature_resp_buf[0] = report_id;
 
-        if (report_id == 0xF7) {
+        if (report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS) {
+            if (report_id == GYRO_REPORT_CONFIG)
+                gyro_runtime_get_config(feature_resp_buf + 1);
+            else
+                gyro_runtime_get_status(feature_resp_buf + 1);
+            *data = feature_resp_buf;
+            *len = 1 + GYRO_REPORT_SIZE;
+        } else if (report_id == 0xF7) {
             struct config_body *cfg = config_get();
             uint16_t cfg_len = sizeof(struct config_body);
             if (cfg_len > FEATURE_DATA_MAX)
@@ -1256,6 +1272,19 @@ void usbd_hid_set_report(uint8_t busid, uint8_t intf, uint8_t report_id,
         payload++;
         payload_len--;
     }
+
+    /* Queue gyro commands from ISR; validation, math and flash run in usb_task.
+     * A full queue leaves the request unacknowledged; the page reports timeout. */
+    if (report_type == 0x03 && report_id == GYRO_REPORT_CONFIG) {
+        if (payload_len == GYRO_REPORT_SIZE && set_report_queue) {
+            set_report_entry_t entry = { .report_id = GYRO_REPORT_CONFIG,
+                                         .len = GYRO_REPORT_SIZE };
+            memcpy(entry.data, payload, GYRO_REPORT_SIZE);
+            xQueueSendFromISR(set_report_queue, &entry, NULL);
+        }
+        return;
+    }
+    if (report_type == 0x03 && report_id == GYRO_REPORT_STATUS) return;
 
     /* Dongle config command (0xF6 SET) */
     if (report_type == 0x03 && report_id == 0xF6 && payload_len > 0) {

@@ -1,4 +1,5 @@
 #include "remap.h"
+#include "gyro.h"
 #include "usb_gamepad.h"
 #include "debug_log.h"
 #include "easyflash.h"
@@ -55,6 +56,7 @@ static uint32_t tp_click_down_ms = 0;
 static bool     tp_click_held = false;
 static bool     tp_right_triggered = false;
 static uint8_t  last_mouse_buttons = 0;
+static int16_t  mouse_pending_x, mouse_pending_y;
 
 static const char *profile_keys[REMAP_PROFILE_COUNT] = {
     "btn_remap",      /* profile 0 — backward compatible key */
@@ -228,6 +230,7 @@ void remap_init(void)
     active_profile = 0;
     g_remap_is_identity = true;
     memset(last_kbd_report, 0, sizeof(last_kbd_report));
+    mouse_pending_x = mouse_pending_y = 0;
 }
 
 void remap_load(void)
@@ -448,6 +451,7 @@ void remap_on_disconnect(void)
     tp_click_held = false;
     tp_right_triggered = false;
     last_mouse_buttons = 0;
+    mouse_pending_x = mouse_pending_y = 0;
 }
 
 bool remap_has_kbd_targets(void)
@@ -484,8 +488,6 @@ static inline int8_t clamp8(int16_t v)
 void remap_mouse_tick(const uint8_t *p)
 {
     uint8_t mode = config_get()->tp_mode;
-    /* Mouse only active in mode 2 (left mouse) or mode 3 (right mouse) */
-    if (mode != 2 && mode != 3) return;
 
     const uint8_t *tp = &p[32];
     bool finger_active = !(tp[0] & 0x80);
@@ -498,7 +500,7 @@ void remap_mouse_tick(const uint8_t *p)
     bool in_mouse_zone = false;
     if (finger_active) {
         if (mode == 2) in_mouse_zone = (x < TP_SPLIT_X);      /* left half */
-        else           in_mouse_zone = (x >= TP_SPLIT_X);     /* right half */
+        else if (mode == 3) in_mouse_zone = (x >= TP_SPLIT_X); /* right half */
     }
 
     int8_t dx = 0, dy = 0;
@@ -561,10 +563,29 @@ void remap_mouse_tick(const uint8_t *p)
         buttons |= btn_bit;
     }
 
-    if (dx != 0 || dy != 0 || buttons != last_mouse_buttons) {
-        if (usb_gamepad_kbd_ready())
-            usb_gamepad_send_mouse_report(buttons, dx, dy, 0);
-        last_mouse_buttons = buttons;
+    /* One mouse producer combines touchpad, mapped buttons and gyro. Never
+     * consume gyro counts until USB accepts the packet, including saturation. */
+    mouse_pending_x += dx;
+    mouse_pending_y += dy;
+    if (mouse_pending_x > 2048) mouse_pending_x = 2048;
+    if (mouse_pending_x < -2048) mouse_pending_x = -2048;
+    if (mouse_pending_y > 2048) mouse_pending_y = 2048;
+    if (mouse_pending_y < -2048) mouse_pending_y = -2048;
+    dx = clamp8(mouse_pending_x);
+    dy = clamp8(mouse_pending_y);
+    int8_t gx, gy;
+    gyro_mouse_peek(&gx, &gy);
+    int8_t mx = clamp8((int16_t)dx + gx);
+    int8_t my = clamp8((int16_t)dy + gy);
+    if (dx || dy || gx || gy || buttons != last_mouse_buttons) {
+        if (usb_gamepad_kbd_ready() &&
+            usb_gamepad_send_mouse_report(buttons, mx, my, 0) >= 0) {
+            int8_t used_x = mx - dx, used_y = my - dy;
+            gyro_mouse_consume(used_x, used_y);
+            mouse_pending_x -= dx;
+            mouse_pending_y -= dy;
+            last_mouse_buttons = buttons;
+        }
     }
 }
 
@@ -580,6 +601,7 @@ void remap_tp_cycle_mode(void)
         if (mask & (1u << cur)) break;
     }
     cfg->tp_mode = cur;
+    mouse_pending_x = mouse_pending_y = 0;
 
     /* Reset mouse state on mode change */
     tp_mouse_last_x = -1;

@@ -9,7 +9,11 @@
 #define USB_GAMEPAD_EP_MPS      64
 #define USB_KBD_EP_MPS          9     /* Report ID (1) + 8 bytes keyboard */
 #define USB_GAMEPAD_INTERVAL_MS 1
-#define USB_KBD_INTERVAL_MS     10
+#ifdef FORCE_FS_MODE
+#define USB_KBD_INTERVAL_MS     1  /* 1ms in FS */
+#else
+#define USB_KBD_INTERVAL_MS     4  /* 8 microframes = 1ms in HS */
+#endif
 
 #define USB_GAMEPAD_VID         0x054C
 #define USB_GAMEPAD_PID         0x0CE6

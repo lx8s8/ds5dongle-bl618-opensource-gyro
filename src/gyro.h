@@ -1,0 +1,50 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define GYRO_CONFIG_VERSION 1
+#define GYRO_CONFIG_SIZE 40
+#define GYRO_REPORT_SIZE 63
+#define GYRO_REPORT_CONFIG 0xFC
+#define GYRO_REPORT_STATUS 0xFD
+
+enum { GYRO_OFF, GYRO_MOUSE, GYRO_RIGHT_STICK };
+enum { GYRO_ALWAYS, GYRO_HOLD, GYRO_TOGGLE, GYRO_HOLD_OFF };
+enum { GYRO_INVERT_X = 1, GYRO_INVERT_Y = 2, GYRO_SUPPRESS = 4,
+       GYRO_REQUIRE_ALL = 8 };
+
+/* Button mask: 0..18 = remap's physical buttons/D-pad; 19/20 = Edge Fn,
+ * 21/22 = Edge paddles; 23 = either touch contact (independent of tp_mode). */
+#define GYRO_BUTTON_MASK 0x00FFFFFFu
+
+struct gyro_config {
+    uint8_t output, activation, trigger, threshold, flags, horizontal_axis;
+    uint8_t smoothing_ms;
+    uint16_t hold_ms, sensitivity_x, sensitivity_y, mouse_cpd;
+    uint16_t noise_dps, max_turn_dps, stick_deadzone, stick_power;
+    uint16_t accel_multiplier, accel_start_dps, accel_end_dps;
+    uint32_t buttons;
+    uint8_t stick_blend; /* 0 additive, 1 replace while active */
+    uint8_t profile_source; /* 0 any, 1 Edge native, 2 dongle remap */
+    uint8_t profile_mask;   /* native: triangle/square/cross/circle; dongle: 0/1 */
+};
+
+/* Pure C engine; one owner (usb_task). Units on wire: sensitivity, mouse_cpd,
+ * noise_dps, stick_power and accel_multiplier use /100; stick_deadzone /1000.
+ * No controller-specific calibration or transient bias is stored in flash. */
+void gyro_init(void);
+void gyro_defaults(uint8_t out[GYRO_CONFIG_SIZE]);
+bool gyro_set_config(const uint8_t *data, uint16_t len);
+void gyro_get_config(uint8_t out[GYRO_CONFIG_SIZE]);
+void gyro_reset_stream(bool forget_calibration);
+bool gyro_set_factory_calibration(const uint8_t *data, uint16_t len);
+void gyro_start_calibration(void);
+void gyro_clear_calibration(void);
+void gyro_process(const uint8_t raw[63], uint8_t output[63],
+                  uint32_t host_us, bool edge);
+void gyro_idle(uint32_t host_us);
+void gyro_get_status(uint8_t out[GYRO_REPORT_SIZE]);
+void gyro_mouse_peek(int8_t *dx, int8_t *dy);
+void gyro_mouse_consume(int8_t dx, int8_t dy);
+void gyro_set_dongle_profile(uint8_t profile);

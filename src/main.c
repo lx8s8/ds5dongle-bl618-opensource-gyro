@@ -16,6 +16,7 @@
 #include "config.h"
 #include "dse.h"
 #include "remap.h"
+#include "gyro_runtime.h"
 
 #include "bl616_glb.h"
 #include "btble_lib_api.h"
@@ -337,6 +338,7 @@ static void on_hid_state(enum bt_hid_host_state state)
 {
     switch (state) {
     case BT_HID_STATE_IDLE: {
+        gyro_runtime_on_disconnect();
         handshake_start_us = 0;
         connecting_start_tick = 0;
         stealth_primer_countdown = 0;
@@ -1088,6 +1090,7 @@ static void usb_task(void *arg)
                    (unsigned long)*(volatile uint32_t *)(USB_BASE + 0x0C4));
         }
         usb_gamepad_process_deferred();
+        gyro_runtime_poll(ds5_connected, (uint32_t)bflb_mtimer_get_time_us());
 
         if (primer_resend_us && ds5_connected &&
             stealth_primer_countdown == 0 &&
@@ -1109,6 +1112,9 @@ static void usb_task(void *arg)
 
         TickType_t wait = pdMS_TO_TICKS(10);
         if (xQueueReceive(input_queue, raw_report, wait) == pdTRUE) {
+            if (!ds5_connected) continue;
+            uint8_t gyro_source[DS5_USB_INPUT_PAYLOAD_LEN];
+            memcpy(gyro_source, raw_report + DS5_BT_PAYLOAD_OFFSET, sizeof(gyro_source));
             last_input_us = bflb_mtimer_get_time_us();
             usb_fwd_count++;
             if (usb_fwd_count == 1)
@@ -1165,15 +1171,22 @@ static void usb_task(void *arg)
                     else if (dpad == DS5_DPAD_E)
                         target = 1;
 
-                    if (target >= 0 && target != remap_get_active_profile()) {
-                        remap_switch_profile((uint8_t)target);
-                        led_status_set(target == 0 ? LED_BLINK_ONCE : LED_BLINK_DOUBLE);
-                        LOG_INF("[REMAP] Combo → profile %d\n", target);
+                    if (target >= 0) {
+                        if (target != remap_get_active_profile()) {
+                            remap_switch_profile((uint8_t)target);
+                            led_status_set(target == 0 ? LED_BLINK_ONCE : LED_BLINK_DOUBLE);
+                            LOG_INF("[REMAP] Combo → profile %d\n", target);
+                        }
                         remap_combo_fired = true;
                     }
                 }
                 if (!create_held)
                     remap_combo_fired = false;
+                if (create_held && (dpad == DS5_DPAD_W || dpad == DS5_DPAD_E)) {
+                    raw_report[2 + DS5_BTN_BYTE] &= ~DS5_BTN_CREATE_BIT;
+                    raw_report[2 + DS5_DPAD_BYTE] =
+                        (raw_report[2 + DS5_DPAD_BYTE] & ~DS5_DPAD_MASK) | DS5_DPAD_NONE;
+                }
             }
 
             /* Touchpad mode cycle: Create + Touchpad Press */
@@ -1210,6 +1223,8 @@ static void usb_task(void *arg)
                 }
             }
 
+            gyro_runtime_process(gyro_source, raw_report + DS5_BT_PAYLOAD_OFFSET,
+                                 (uint32_t)bflb_mtimer_get_time_us(), bt_hid_host_is_dse());
             if (!vol_key_active)
                 remap_kbd_tick(raw_report + 2);
             remap_mouse_tick(raw_report + 2);
@@ -1416,6 +1431,7 @@ int main(void)
     config_load();
     remap_init();
     remap_load();
+    gyro_runtime_init();
     led_status_init();
     led_status_set(LED_PURPLE_BLINK_SLOW);
     boot_button_init();

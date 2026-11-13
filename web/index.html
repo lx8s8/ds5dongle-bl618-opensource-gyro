@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DS5 Gyro · 固件体感控制台</title>
+<link rel="stylesheet" href="style.css">
+<body>
+<main>
+  <header>
+    <div><div class="eyebrow">BL616 / BL618 · OPEN SOURCE</div><h1>让瞄准跟上你的手。</h1>
+      <p>DualSense 固件体感控制台 <span class="tag">GYRO G1</span></p></div>
+    <button id="connect" class="primary">连接接收器</button>
+  </header>
+  <div class="connection"><span id="connectionDot" class="dot"></span><span id="device">未连接 · 请使用桌面 Chrome / Edge，通过 HTTPS 或 localhost 打开</span><button id="disconnect" disabled>断开网页</button></div>
+  <nav aria-label="控制台页面"><a href="#config">体感设置</a><a href="#tester">实时调试</a><a href="#update">固件更新</a></nav>
+  <p id="message" role="status" aria-live="polite">默认关闭体感。应用只修改内存，保存后断电仍保留；关闭网页后固件继续工作。</p>
+
+  <section id="config" class="panel">
+    <div class="section-title"><div><div class="eyebrow">01 / CONFIGURE</div><h2>按你的习惯启用</h2></div><div class="actions"><button id="presetL2">按住 L2</button><button id="presetLong">长按 L2 · 300ms</button></div></div>
+    <form id="settings">
+      <div class="grid" id="activationFields"></div>
+      <div class="subhead"><h3>随手柄配置档切换</h3></div>
+      <div class="grid" id="profileFields"></div>
+      <fieldset id="profiles"><legend>仅在这些配置档启用（可多选）</legend></fieldset>
+      <p class="hint">Edge 可选择 Fn + △ / □ / × / ○ 对应的原生档位；档位内容仍由 PS5 / PlayStation Accessories 设置。普通版可绑定接收器档 1 / 2，用 Create + 方向键左 / 右切换。选择“始终启用”配合指定档位，即可实现切档开关体感。</p>
+      <div class="subhead"><h3>自定义启用键</h3><button id="learn" type="button">读取当前按下的按键</button></div>
+      <p class="hint">扳机条件与下方按键条件同时满足后启用。Edge 背键取独立物理位；若手柄内部也映射了普通按键，该按键仍会输出。</p>
+      <fieldset id="buttons"><legend class="sr-only">启用按键</legend></fieldset>
+      <div class="checks">
+        <label><input type="checkbox" id="allButtons"> 需要所有选中的按键</label>
+        <label><input type="checkbox" id="suppress"> 屏蔽启用键原始输出</label>
+        <label><input type="checkbox" id="invertX"> 反转水平</label>
+        <label><input type="checkbox" id="invertY"> 反转垂直</label>
+      </div>
+      <hr><h3>灵敏度与稳定性</h3><div class="grid" id="motionFields"></div>
+      <hr><h3>右摇杆输出 · 匹配游戏设置</h3>
+      <p class="hint">鼠标模式不使用以下参数。右摇杆效果取决于游戏的最大转速、死区和曲线；固件无法自动识别当前游戏。</p>
+      <div class="grid" id="stickFields"></div>
+      <div class="toolbar"><button id="apply" class="primary" type="submit" disabled>应用到固件</button><button id="save" type="button" disabled>应用并保存</button><button id="read" type="button" disabled>重新读取</button><button id="defaults" type="button" disabled>恢复默认（内存）</button></div>
+    </form>
+    <div class="filebar"><button id="export">导出配置 JSON</button><label class="file-button">导入配置 JSON<input type="file" id="import" accept="application/json,.json"></label><span>导入后需点击应用</span></div>
+  </section>
+
+  <section id="tester" class="panel">
+    <div class="section-title"><div><div class="eyebrow">02 / OBSERVE</div><h2>看到每一次转动</h2></div><span id="active" class="tag">等待输入</span></div>
+    <div class="metrics"><div><small>采样间隔</small><strong id="interval">—</strong></div><div><small>工厂标定</small><strong id="factory">—</strong></div><div><small>零点校准</small><strong id="calibration">—</strong></div><div><small>实际 USB 右摇杆</small><strong id="stick">—</strong></div></div>
+    <div class="plot-label"><span>角速度 °/s · <i class="pitch">Pitch X</i> / <i class="yaw">Yaw Y</i> / <i class="roll">Roll Z</i></span><span id="rates">0 / 0 / 0</span></div>
+    <canvas id="chart" width="1000" height="230" aria-label="最近18秒陀螺仪角速度曲线"></canvas>
+    <div class="checks"><button id="calibrate" disabled>静止校准 · 2 秒</button><button id="clearCalibration" disabled>清除零点校准</button><button id="csv">导出最近数据 CSV</button></div>
+    <p class="hint">校准时把手柄放稳，映射暂时暂停。检测到移动会重新计时。零点只用于当前连接，重连后重新校准；校准期间保持转动可能导致偏差。</p>
+    <div class="live-buttons" id="liveButtons" aria-label="原始物理按键"></div>
+    <details><summary>原始数据与输出</summary><pre id="raw">等待接收器报告…</pre></details>
+  </section>
+
+  <section id="update" class="panel">
+    <div class="eyebrow">03 / FIRMWARE</div><h2>构建与烧录</h2>
+    <p>当前固件：<b id="firmware">未连接</b></p>
+    <p>此分支通过串口 / ISP 烧录更新。网页提供配置和测试；当前固件没有 OTA 写入协议。</p>
+    <ol><li>按仓库 README_CN.md 安装专用 Bouffalo SDK 分支和 T-Head 工具链。</li><li>在仓库执行 <code>bash build_macos.sh build</code>，默认构建 LCTech BL616。</li><li>按住开发板 BOOT 接入，使用 Dev Cube 的 BL616 UART / ISP 模式。</li><li>选择 <code>partition_cfg_4M_nosec.toml</code>、Boot2 和对应开发板的固件，完成烧录后重新配对。</li></ol>
+    <p class="hint">网页连接 USB 接收器；直接连接原装手柄或旧固件时会提示缺少 0xFC / 0xFD 协议。当前仅接入 DualSense / DualSense Edge，其他品牌需先实现其蓝牙协议。</p>
+  </section>
+  <footer>DS5 Gyro · 运算在接收器内完成 · 配置与调试页无外部依赖</footer>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

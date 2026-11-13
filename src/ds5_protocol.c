@@ -39,7 +39,8 @@ static inline int16_t read_le16(const uint8_t *p)
 
 static inline uint32_t read_le32(const uint8_t *p)
 {
-    return (uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 static inline void write_le32(uint8_t *p, uint32_t v)
@@ -95,8 +96,8 @@ int ds5_parse_bt_input(const uint8_t *data, uint16_t len, struct ds5_input_state
 
     /* p[10] = UNK2, p[11..14] = UNK_COUNTER (4 bytes) */
     state->gyro_x = read_le16(&p[15]);
-    state->gyro_z = read_le16(&p[17]);
-    state->gyro_y = read_le16(&p[19]);
+    state->gyro_y = read_le16(&p[17]);
+    state->gyro_z = read_le16(&p[19]);
     state->accel_x = read_le16(&p[21]);
     state->accel_y = read_le16(&p[23]);
     state->accel_z = read_le16(&p[25]);

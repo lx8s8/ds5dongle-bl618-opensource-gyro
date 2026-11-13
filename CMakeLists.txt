@@ -26,6 +26,8 @@ target_sources(app PRIVATE
     src/config.c
     src/dse.c
     src/remap.c
+    src/gyro.c
+    src/gyro_runtime.c
 )
 
 sdk_add_include_directories(src)

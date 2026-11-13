@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><title>Gyro UI integration test</title>
+<script type="module">
+// Browser integration test with an explicit fake USB device. Never connects to
+// hardware. Serve the repository root, then open /tests/web_ui_test.html.
+import { defaults, encodeConfig, decodeConfig } from '../web/protocol.mjs';
+let config = defaults(), ack = [0, 0, 0], saveFails = false, saves = 0;
+const commands = [];
+class FakeDevice extends EventTarget {
+  opened = false; productName = 'SIMULATED DS5 GYRO'; productId = 0x0DF2;
+  collections = [{ featureReports: [{ reportId: 0xFC }, { reportId: 0xFD }] }];
+  async open() { this.opened = true; }
+  async close() { this.opened = false; }
+  async sendFeatureReport(id, bytes) {
+    check(id === 0xFC && bytes.length === 63, 'full-length SET_REPORT');
+    commands.push(bytes.slice()); ack = [bytes[0], 0, bytes[1]];
+    if (bytes[0] === 1) config = decodeConfig(bytes.slice(2, 42));
+    if (bytes[0] === 2) { if (saveFails) ack[1] = 2; else saves++; }
+    if (bytes[0] === 4) config = defaults();
+  }
+  async receiveFeatureReport(id) {
+    const bytes = new Uint8Array(64); bytes[0] = id;
+    if (id === 0xFC) { bytes.set(encodeConfig(config), 1); bytes.set(ack, 41); }
+    if (id === 0xFD) { bytes[1] = 1; bytes[2] = 27; bytes[63] = 2; }
+    if (id === 0xF8) bytes.set(new TextEncoder().encode('UI TEST DEVICE'), 1);
+    return new DataView(bytes.buffer);
+  }
+}
+const fake = new FakeDevice(), hid = new EventTarget();
+hid.requestDevice = async () => [fake];
+Object.defineProperty(navigator, 'hid', { configurable: true, value: hid });
+const html = await (await fetch('../web/index.html')).text();
+document.open(); document.write(html.replace('href="style.css"', 'href="../web/style.css"').replace('<script type="module" src="app.js"></' + 'script>', '')); document.close();
+const $ = id => document.getElementById(id);
+const result = document.createElement('pre'); result.id = 'testResults'; document.body.prepend(result);
+let assertions = 0;
+function check(condition, label) { if (!condition) throw new Error(label); assertions++; }
+function change(id, value) { $(id).value = value; $(id).dispatchEvent(new Event('change')); }
+async function waitFor(predicate) {
+  const deadline = performance.now() + 4000;
+  while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); }
+}
+try {
+  await import('../web/app.js');
+  check($('apply').disabled, 'initial disconnected state');
+  check($('profiles').hidden, 'profile choices hidden without binding');
+  $('connect').click(); await waitFor(() => !$('apply').disabled);
+  check(fake.opened && $('device').textContent.includes('SIMULATED'), 'connect/read config');
+  $('presetLong').click(); check($('hold').value === '300' && $('output').value === '1', 'long-L2 preset');
+  change('profileSource', '1');
+  check($('profiles').querySelectorAll('input').length === 4, 'four native Edge profiles');
+  $('profiles').querySelector('[data-profile="1"]').checked = true;
+  change('activation', '0'); $('apply').click();
+  await waitFor(() => !$('apply').disabled);
+  check(config.profileSource === 1 && config.profiles === 2 && config.activation === 0, 'native-profile settings reach wire');
+  $('save').click(); await waitFor(() => !$('apply').disabled);
+  check(saves === 1 && commands.at(-1)[0] === 2, 'explicit save command');
+  saveFails = true; $('save').click(); await waitFor(() => !$('apply').disabled);
+  check($('message').classList.contains('error') && $('message').textContent.includes('Flash'), 'flash failure shown');
+  change('profileSource', '2');
+  check($('profiles').querySelectorAll('input').length === 2, 'two dongle profiles');
+  $('profiles').querySelector('[data-profile="1"]').checked = true;
+  $('apply').click(); await waitFor(() => !$('apply').disabled);
+  check(config.profileSource === 2 && config.profiles === 2, 'dongle-profile settings reach wire');
+  $('defaults').click(); await waitFor(() => !$('apply').disabled);
+  check(config.output === 0 && $('output').value === '0', 'reset disables mapping');
+  await waitFor(() => $('factory').textContent === '已应用');
+  check($('raw').textContent.includes('Edge 原生档: 2'), 'telemetry rendered');
+  $('disconnect').click(); await waitFor(() => !fake.opened);
+  check($('apply').disabled, 'disconnect restores controls');
+  result.textContent = `PASS: ${assertions} assertions; fake WebHID device only`;
+  result.style.color = '#70e6bc';
+} catch (e) { result.textContent = `FAIL: ${e.stack}`; result.style.color = '#ff9c91'; }
+</script>
