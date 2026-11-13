@@ -14,6 +14,10 @@ BOARD_TYPE="${BOARD_TYPE:-lctech616}"
 #   fs  — Full-Speed 12Mbps（默认，线材兼容性好）
 #   hs  — High-Speed 480Mbps（高轮询率，线材兼容性较差）
 USB_SPEED="${USB_SPEED:-fs}"
+case "$USB_SPEED" in
+    fs|hs) ;;
+    *) echo "ERROR: USB_SPEED must be fs or hs" >&2; exit 1 ;;
+esac
 
 # Clear all board env vars first
 unset BOARD_M0S_DOCK 2>/dev/null || true
@@ -32,19 +36,23 @@ case "$BOARD_TYPE" in
         export BOARD_M0S_DOCK=1
         echo "[build] Target: Sipeed M0S Dock (BL616)"
         ;;
-    lctech616|*)
-        BOARD_TYPE="lctech616"
+    lctech616)
         export BOARD_LCTECH_616=1
         echo "[build] Target: LCTech BL616"
         ;;
+    *) echo "ERROR: unknown BOARD_TYPE: ${BOARD_TYPE}" >&2; exit 1 ;;
 esac
 
 echo "[build] USB:  ${USB_SPEED}"
 
 # ── 环境变量（仅脚本执行期间生效） ──
-export BL_SDK_BASE="${SCRIPT_DIR}/../bouffalo_sdk"
+export BL_SDK_BASE="${BL_SDK_BASE:-${SCRIPT_DIR}/../bouffalo_sdk}"
 export CHIP=bl616
 export BOARD=bl616dk
+if [[ ! -f "${BL_SDK_BASE}/project.build" ]]; then
+    echo "ERROR: DS5Dongle SDK not found at ${BL_SDK_BASE}; set BL_SDK_BASE" >&2
+    exit 1
+fi
 
 # ── 工具链查找 ──
 TOOLCHAIN_PREFIX=""
@@ -84,14 +92,19 @@ if ! find_toolchain; then
     echo "============================================"
     echo " ERROR: RISC-V toolchain not found"
     echo ""
-    echo " 请安装 riscv64-unknown-elf-gcc 或 riscv64-elf-gcc："
-    echo ""
-    echo "   macOS (Homebrew):"
-    echo "     brew install riscv64-elf-gcc"
+    echo " 请安装支持 BL616 DSP 扩展的 T-Head / XuanTie 工具链。"
+    echo " 普通 Homebrew riscv64-elf-gcc 不适用于本项目。"
+    echo " Linux CI 的固定版本见 .github/ci/dependencies.env。"
     echo ""
     echo "   安装后重新执行: ./build_macos.sh"
     echo "============================================"
     exit 1
+fi
+
+# Override the SDK's bundled Linux CMake when requested by CI.
+MAKE_ARGS=("CROSS_COMPILE=${TOOLCHAIN_PREFIX}")
+if [[ -n "${CMAKE_CMD:-}" ]]; then
+    MAKE_ARGS+=("CMAKE=${CMAKE_CMD}")
 fi
 
 export CROSS_COMPILE="$TOOLCHAIN_PREFIX"
@@ -114,7 +127,11 @@ echo "[build] Make:      $(${MAKE_CMD} --version | head -1)"
 echo "[build] Chip:      ${CHIP} / ${BOARD}"
 echo ""
 
-NPROC=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+NPROC="${BUILD_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
+if [[ ! "$NPROC" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: BUILD_JOBS must be a positive integer" >&2
+    exit 1
+fi
 
 # ── 清理中间文件（保留最终固件） ──
 strip_intermediates() {
@@ -140,7 +157,7 @@ if [[ -f "$BOARD_STAMP" ]]; then
     PREV_KEY=$(cat "$BOARD_STAMP")
     if [[ "$PREV_KEY" != "$BUILD_KEY" ]]; then
         echo "[build] Config changed (${PREV_KEY} → ${BUILD_KEY}), forcing clean..."
-        ${MAKE_CMD} clean 2>/dev/null || true
+        ${MAKE_CMD} "${MAKE_ARGS[@]}" clean 2>/dev/null || true
         rm -rf build/build_out/CMakeCache.txt build/build_out/cmake_cache 2>/dev/null || true
     fi
 fi
@@ -194,7 +211,7 @@ FLASH_CFG
 
 # ── 执行 ──
 do_build() {
-    ${MAKE_CMD} CROSS_COMPILE="${CROSS_COMPILE}" -j${NPROC}
+    ${MAKE_CMD} "${MAKE_ARGS[@]}" -j"${NPROC}"
     mkdir -p build && echo "$BUILD_KEY" > "$BOARD_STAMP"
 }
 
@@ -210,15 +227,15 @@ case "$ACTION" in
         echo "[build] Done (${BOARD_TYPE}, usb=${USB_SPEED}). Output: ${OUT_DIR}/"
         ;;
     clean)
-        ${MAKE_CMD} clean
+        ${MAKE_CMD} "${MAKE_ARGS[@]}" clean
         echo "[build] Cleaned."
         ;;
     flash)
         COMX="${2:-/dev/tty.usbserial*}"
-        ${MAKE_CMD} flash COMX="$COMX"
+        ${MAKE_CMD} "${MAKE_ARGS[@]}" flash COMX="$COMX"
         ;;
     rebuild)
-        ${MAKE_CMD} clean
+        ${MAKE_CMD} "${MAKE_ARGS[@]}" clean
         rm -rf build/build_out/CMakeCache.txt build/build_out/cmake_cache 2>/dev/null || true
         do_build
         do_output

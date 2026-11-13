@@ -1,5 +1,11 @@
 # DS5Dongle BL618
 
+## 本分支新增：固件陀螺仪映射 G1
+
+新增鼠标/右摇杆体感输出、按住/长按/单击切换、自定义按键与 Edge 背键、静止校准和中文 WebHID 调试页。支持仅在指定 **Edge 原生 Fn 配置档**或**接收器两套映射档**启用体感；应用后关闭网页仍运行。默认关闭映射。
+
+运行 `python3 -m http.server 8765 --bind 127.0.0.1 --directory web` 后，用桌面 Chrome / Edge 打开 `http://127.0.0.1:8765/`。详细设置、参考方案对比、协议和验证范围见 [陀螺仪说明](docs/GYRO_CN.md)。主机测试运行 `make -C tests check`；当前尚未完成完整固件构建与硬件联调。
+
 基于 BL616/BL618 的 DualSense 无线手柄适配器。将 DualSense / DualSense Edge 手柄通过蓝牙经典（BR/EDR）HID 连接到 BL616/BL618，再通过 USB HID 透传给主机，主机端呈现为标准有线 DualSense（VID 054C / PID 0CE6）或 DualSense Edge（PID 0DF2）。Steam、SDL、PS Remote Play 等均可直接识别。
 
 移植自 [awalol/DS5Dongle](https://github.com/awalol/DS5Dongle)（Raspberry Pi Pico 2W 版本）：BT 栈从 BTstack 迁移至 Bouffalo SDK（Zephyr 内核），USB 栈从 TinyUSB 迁移至 CherryUSB。
@@ -42,6 +48,12 @@ GND              → USB GND（黑色）
 
 ## 快速开始
 
+### GitHub 自动编译（无需本地安装 SDK）
+
+仓库内的 [Firmware 工作流](.github/workflows/firmware.yml) 会在推送、Pull Request 和手动运行时，测试并构建三种板型 × FS/HS 六个版本。进入 GitHub 仓库 **Actions → Firmware → 成功的运行 → Artifacts**，下载对应的 `firmware-板型-速度`，解压其中的刷机 ZIP。LCTech BL616 通常选择 `firmware-lctech616-fs`。
+
+每个包包含主固件、Boot2、分区文件、刷机配置、网页配置工具、版本记录和 SHA256 校验。推送 `v*` 标签还会自动创建包含六个包的 Release 草稿。详细触发、下载和发布步骤见 [自动构建说明](docs/CI_CN.md)。
+
 ### 1. 安装 Bouffalo SDK（必须使用本项目分支）
 
 > 官方 Bouffalo SDK **无法**用于本项目——缺少固件所需的 BT HID net_buf 池和 USB Audio 请求处理。必须使用本项目维护的 SDK 分支：
@@ -50,7 +62,7 @@ GND              → USB GND（黑色）
 git clone https://github.com/sqlCRT/bouffalo_sdk.git bouffalo_sdk
 ```
 
-构建脚本要求 SDK 位于 `../bouffalo_sdk`（与本仓库同级目录），直接使用该分支的 `master` 即可。该分支基于上游 v2.3.28，并针对 DS5Dongle BL618 做了针对性修改，详见其 README。
+构建脚本默认从 `../bouffalo_sdk`（与本仓库同级目录）读取 SDK，也可用 `BL_SDK_BASE` 指定路径。CI 固定使用 [.github/ci/dependencies.env](.github/ci/dependencies.env) 中的提交（基于上游 v2.3.32），本地复现时也应切换到该提交。
 
 ### 2. 安装依赖
 
@@ -72,7 +84,7 @@ BL616/BL618 使用 T-Head 扩展指令集，标准 `riscv64-elf-gcc` 无法使�
 curl -L https://github.com/beckmx/bouffalo_labs_mac_toolchain/releases/download/v1.0/riscv64-unknown-elf-toolchain.tar.gz \
   | tar xz -C ~/riscv-toolchain
 
-# Linux — SDK 自带工具链，或从 T-Head 官方下载
+# Linux x86_64 — 使用 .github/ci/install-toolchain.sh 安装 CI 固定的 XuanTie 工具链
 ```
 
 `build_macos.sh` 会自动在 `~/riscv-toolchain/toolchain/bin` 下查找工具链。
@@ -107,7 +119,7 @@ bash build_macos.sh strip      # 删除 .o/.a 中间文件，缩小 build 目录
 - **默认 USB 速度：Full-Speed（12Mbps）**；传 `USB_SPEED=hs` 可构建 High-Speed 变体（轮询上限更高，但对线材更敏感）。
 - 切换 `BOARD_TYPE` 或 `USB_SPEED` 会自动触发一次干净重编（CMake 缓存不兼容）。
 
-产物位于 `firmware/{board}/ds5dongle-{board}.bin`（约 800KB），以及 boot2/partition 文件和 `flash_prog_cfg.ini`。编译产物已被 git 忽略 —— 如需分发预编译固件，建议附加到 GitHub Release。
+产物位于 `firmware/{board}/ds5dongle-{board}.bin`（约 800KB），以及 boot2/partition 文件和 `flash_prog_cfg.ini`。编译产物已被 git 忽略；自动构建通过 Actions Artifacts / Release 草稿分发，不把二进制提交进 Git。
 
 #### Windows 编译
 

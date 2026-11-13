@@ -1,4 +1,7 @@
 build/
+.deps/
+dist/
+__pycache__/
 bouffalo_sdk_ds5/
 *.o
 *.a

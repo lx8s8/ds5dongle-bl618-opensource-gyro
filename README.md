@@ -1,5 +1,7 @@
 # DS5Dongle BL618
 
+This branch adds experimental firmware gyro-to-mouse/right-stick mapping, configurable hold/toggle gates, Edge paddle sources, native Edge Fn profile binding and dongle profile binding, plus a local WebHID configuration/debug page. Mapping defaults to off. See [the gyro guide](docs/GYRO_CN.md) for setup, protocol, references and verification limits. Run host tests with `make -C tests check`; a complete firmware build and hardware validation are still required.
+
 [中文文档 (Chinese)](README_CN.md)
 
 A wireless DualSense controller adapter based on BL616/BL618. It bridges a DualSense or DualSense Edge gamepad over Bluetooth Classic (BR/EDR) HID to a host PC via USB HID, appearing as a standard wired DualSense (VID 054C / PID 0CE6) or DualSense Edge (PID 0DF2). Fully compatible with Steam, SDL, PS Remote Play, and more.
@@ -44,6 +46,12 @@ If the host does not supply power over USB, the board needs separate power via i
 
 ## Getting Started
 
+### Automatic builds on GitHub
+
+The [Firmware workflow](.github/workflows/firmware.yml) runs host tests and builds all three boards in FS and HS modes on pushes, pull requests and manual runs. Open **Actions → Firmware → a successful run → Artifacts** and download `firmware-<board>-<speed>`. LCTech BL616 users should normally start with `firmware-lctech616-fs`.
+
+Each archive includes the firmware, Boot2, partition files, flash configuration, WebHID UI, dependency provenance and SHA256 checksums. Pushing a `v*` tag also creates a draft GitHub Release with all six packages. See [the CI guide](docs/CI_CN.md).
+
 ### 1. Bouffalo SDK (DS5Dongle fork — required)
 
 > The official Bouffalo SDK will **not** work with this project — it is missing the required BT HID net_buf pools and USB Audio request handling. You must use the project's SDK fork:
@@ -52,7 +60,7 @@ If the host does not supply power over USB, the board needs separate power via i
 git clone https://github.com/sqlCRT/bouffalo_sdk.git bouffalo_sdk
 ```
 
-The build script expects the SDK in `../bouffalo_sdk` (a sibling directory of this repository) and builds against the fork's `master` branch. The fork is based on upstream v2.3.28 with targeted DS5Dongle BL618 modifications; see its README for details.
+The build script defaults to `../bouffalo_sdk` (a sibling directory) and accepts a `BL_SDK_BASE` override. CI pins a specific commit in [.github/ci/dependencies.env](.github/ci/dependencies.env), based on upstream v2.3.32; use that same commit to reproduce a CI build locally.
 
 ### 2. Dependencies
 
@@ -74,7 +82,7 @@ BL616/BL618 uses the T-Head extended ISA. A standard `riscv64-elf-gcc` will not 
 curl -L https://github.com/beckmx/bouffalo_labs_mac_toolchain/releases/download/v1.0/riscv64-unknown-elf-toolchain.tar.gz \
   | tar xz -C ~/riscv-toolchain
 
-# Linux — the SDK ships its own toolchain, or download from T-Head
+# Linux x86_64 — .github/ci/install-toolchain.sh installs the pinned CI XuanTie toolchain
 ```
 
 `build_macos.sh` auto-detects the toolchain under `~/riscv-toolchain/toolchain/bin`.
@@ -109,7 +117,7 @@ bash build_macos.sh strip      # remove .o/.a to shrink build dir
 - **Default USB speed: Full-Speed (12 Mbps)**; pass `USB_SPEED=hs` to build the High-Speed variant (higher polling ceiling, more sensitive to cable quality).
 - Switching `BOARD_TYPE` or `USB_SPEED` triggers an automatic clean rebuild (CMake cache incompatible).
 
-Output: `firmware/{board}/ds5dongle-{board}.bin` (~800 KB) plus boot2/partition files and a `flash_prog_cfg.ini`. Built binaries are git-ignored — attach them to a GitHub Release if you want to distribute prebuilt firmware.
+Output: `firmware/{board}/ds5dongle-{board}.bin` (~800 KB) plus boot2/partition files and a `flash_prog_cfg.ini`. Binaries are git-ignored; CI distributes flashing packages through Actions Artifacts and draft Releases.
 
 #### Windows
 

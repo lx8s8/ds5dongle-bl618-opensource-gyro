@@ -4,6 +4,8 @@ CONFIG_RF =y
 CONFIG_BTBLECONTROLLER_LIB =ble1m2s1bredr1
 CONFIG_BFLB_MTD =y
 CONFIG_PARTITION =y
+# Use the same unencrypted 4 MiB application layout in CI and Dev Cube.
+CONFIG_OVERRIDE_PTFILE =firmware/lctech616/partition_cfg_4M_nosec.toml
 CONFIG_LITTLEFS =y
 CONFIG_CHERRYUSB =y
 CONFIG_CHERRYUSB_OSAL =freertos

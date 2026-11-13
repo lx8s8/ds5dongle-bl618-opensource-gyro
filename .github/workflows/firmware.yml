@@ -1,0 +1,122 @@
+name: Firmware
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Host tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify host logic, descriptors and WebHID protocol
+        run: |
+          node --version
+          make -C tests check
+          make -C tests sanitize
+          python3 -m unittest discover -s tests -p 'test_pack*.py' -v
+
+  build:
+    name: ${{ matrix.board }} / ${{ matrix.usb }}
+    needs: tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [lctech616, aim61, m0sdock]
+        usb: [fs, hs]
+    env:
+      BL_SDK_BASE: ${{ github.workspace }}/.deps/bouffalo_sdk
+      CMAKE_CMD: cmake
+      BOARD_TYPE: ${{ matrix.board }}
+      USB_SPEED: ${{ matrix.usb }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Read dependency pins
+        run: |
+          source .github/ci/dependencies.env
+          echo "SDK_REPOSITORY=$SDK_REPOSITORY" >> "$GITHUB_ENV"
+          echo "SDK_REF=$SDK_REF" >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_SHA256=$TOOLCHAIN_SHA256" >> "$GITHUB_ENV"
+      - name: Check out DS5Dongle SDK
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ env.SDK_REPOSITORY }}
+          ref: ${{ env.SDK_REF }}
+          path: .deps/bouffalo_sdk
+          persist-credentials: false
+      - name: Cache pinned toolchain
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .deps/toolchain
+          key: xuantie-${{ runner.os }}-${{ runner.arch }}-${{ env.TOOLCHAIN_SHA256 }}
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential cmake ninja-build xz-utils libusb-1.0-0
+          bash .github/ci/install-toolchain.sh
+      - name: Compile firmware
+        run: |
+          test "$(git -C "$BL_SDK_BASE" rev-parse HEAD)" = "$SDK_REF"
+          set -o pipefail
+          bash build_macos.sh build 2>&1 | tee firmware-build.log
+      - name: Assemble flashing package
+        run: python3 scripts/package_firmware.py --board "$BOARD_TYPE" --usb "$USB_SPEED"
+      - name: Upload firmware package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firmware-${{ matrix.board }}-${{ matrix.usb }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: debug-${{ matrix.board }}-${{ matrix.usb }}
+          path: |
+            firmware-build.log
+            build/build_out/*.elf
+            build/build_out/*.map
+            build/generated/defconfig.cmake
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: Draft tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [tests, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: firmware-*
+          path: dist
+          merge-multiple: true
+      - name: Attach all six packages to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.zip --verify-tag --draft \
+            --title "$RELEASE_TAG" --generate-notes
