@@ -102,12 +102,12 @@ void gyro_runtime_command(const uint8_t *p, uint16_t len)
     publish();
 }
 
-void gyro_runtime_get_config(uint8_t *out)
+void gyro_runtime_get_config(uint8_t out[GYRO_REPORT_SIZE])
 {
     memcpy(out, config_report[published], GYRO_REPORT_SIZE);
 }
 
-void gyro_runtime_get_status(uint8_t *out)
+void gyro_runtime_get_status(uint8_t out[GYRO_REPORT_SIZE])
 {
     memcpy(out, status_report[published], GYRO_REPORT_SIZE);
 }
