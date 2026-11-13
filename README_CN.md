@@ -4,7 +4,7 @@
 
 新增鼠标/右摇杆体感输出、按住/长按/单击切换、自定义按键与 Edge 背键、静止校准和中文 WebHID 调试页。支持仅在指定 **Edge 原生 Fn 配置档**或**接收器两套映射档**启用体感；应用后关闭网页仍运行。默认关闭映射。
 
-运行 `python3 -m http.server 8765 --bind 127.0.0.1 --directory web` 后，用桌面 Chrome / Edge 打开 `http://127.0.0.1:8765/`。详细设置、参考方案对比、协议和验证范围见 [陀螺仪说明](docs/GYRO_CN.md)。主机测试运行 `make -C tests check`；当前尚未完成完整固件构建与硬件联调。
+运行 `python3 -m http.server 8765 --bind 127.0.0.1 --directory web` 后，用桌面 Chrome / Edge 打开 `http://127.0.0.1:8765/`。详细设置、参考方案对比、协议和验证范围见 [陀螺仪说明](docs/GYRO_CN.md)，后续建议见 [功能新增与优化清单](docs/ROADMAP_CN.md)。主机测试与 GitHub Actions 六个版本的固件编译、打包已通过，真实手柄和开发板联调尚未完成。主机测试运行 `make -C tests check`。
 
 基于 BL616/BL618 的 DualSense 无线手柄适配器。将 DualSense / DualSense Edge 手柄通过蓝牙经典（BR/EDR）HID 连接到 BL616/BL618，再通过 USB HID 透传给主机，主机端呈现为标准有线 DualSense（VID 054C / PID 0CE6）或 DualSense Edge（PID 0DF2）。Steam、SDL、PS Remote Play 等均可直接识别。
 

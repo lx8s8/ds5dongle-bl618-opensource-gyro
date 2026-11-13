@@ -2,6 +2,8 @@
 
 Git 负责保存源码，GitHub Actions 在云端编译。本项目配置位于 [firmware.yml](../.github/workflows/firmware.yml)，不需要把本地 SDK、工具链或固件二进制提交进仓库，也无需额外设置 Secret。
 
+2026-11-14（北京时间），[运行 43458084369](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/actions/runs/43458084369) 已实际通过主机检查与全部六个版本的编译、打包，生成六个固件 Artifact 和六个调试 Artifact。默认 LCTech FS 包已下载核对官方 Artifact SHA256、包内校验和、构建来源及刷机文件。真实硬件尚未验收；后续功能建议见 [优化清单](ROADMAP_CN.md)。
+
 ## 触发与下载
 
 推送任意分支或标签、提交 Pull Request，都会启动 `Firmware` 工作流。工作流合并到默认分支后，也可在 GitHub **Actions → Firmware → Run workflow** 中选择分支并手动运行。仓库若禁用了 Actions，需要先在仓库设置中启用。

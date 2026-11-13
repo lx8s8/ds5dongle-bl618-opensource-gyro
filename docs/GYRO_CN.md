@@ -2,7 +2,7 @@
 
 这一分支在已有 DualSense USB 透传路径中增加体感处理。运算运行在接收器固件，网页只负责设置和观察；应用后关闭网页仍生效。默认关闭映射，避免首次连接就移动电脑光标。
 
-当前完成了源代码与主机模拟验证，尚未完成 BL616 / BL618 编译和真实手柄联调。请先阅读下文的验证边界。
+当前已完成主机模拟验证，以及 GitHub Actions 中三种板型 × FS/HS 六个版本的固件编译和打包；真实接收器、手柄及游戏联调尚未完成。请先阅读下文的验证边界。后续建议按优先级整理在 [功能新增与优化清单](ROADMAP_CN.md)。
 
 ## 日常使用方案
 
@@ -186,6 +186,8 @@ node tests/web_protocol_test.mjs
 
 另提供 `tests/web_ui_test.html`：从仓库根目录启动 HTTP 服务后打开这个页面，会使用明确标记的模拟 WebHID 设备自动验证连接、足长命令、应用、Flash 失败提示、两种配置档绑定、恢复默认、遥测与断开；本次 20 个断言通过。它不会访问真实硬件。
 
-当前工作区未安装项目专用 Bouffalo SDK 和 T-Head 工具链，`bash build_macos.sh build` 在工具链检查阶段停止，因此**没有产出已验证可烧录的固件**。真实蓝牙延迟、音频并发、Windows WebHID、FS/HS 枚举、Edge 原生切档报告及背键行为需硬件验证。构建和烧录步骤沿用仓库 README；网页没有实现 OTA 或浏览器 ISP 写入。
+2026-11-14（北京时间），[GitHub Actions 运行 43458084369](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/actions/runs/43458084369) 已通过主机检查，并成功编译、打包 LCTech BL616、Ai-M61-32S-Kit、M0S Dock 的 FS/HS 共六个版本。下载的 LCTech FS Artifact 已与 GitHub 官方 SHA256 比对，并核对包内全部校验和、源码/SDK 提交、刷机配置与分区；主固件为 774736 字节。下载和构建步骤见 [自动构建说明](CI_CN.md)。
+
+**编译与文件校验通过不代表真机已验证。** 真实蓝牙延迟、音频并发、Windows WebHID、FS/HS 枚举、Edge 原生切档报告及背键行为仍需硬件验收。固件包的 `build-info.json` 明确记录 `hardware_validated: false`；网页没有实现 OTA 或浏览器 ISP 写入。
 
 下一步硬件验收顺序：默认关闭枚举与透传 → 读取 0xFC/0xFD → 静止校准 → L2 鼠标 → 右摇杆 → Edge Fn 切档/背键 → 普通版两档/快捷键 → 保存重启 → 断连换手柄 → 同时音频/触觉负载 → FS 与 HS 各复测。
