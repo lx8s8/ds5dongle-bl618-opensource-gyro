@@ -4,6 +4,8 @@
 #include "usb_gamepad.h"
 #include "config.h"
 #include "remap.h"
+#include "dongle_control.h"
+#include "diagnostics.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -12,8 +14,11 @@
 static uint8_t p[63], out[63], c[40], status[63];
 static uint32_t timestamp, host;
 static struct config_body app_config;
-static uint8_t saved[40];
-static bool saved_valid, save_fails, endpoint_ready = true;
+static bool save_fails, endpoint_ready = true;
+static struct { char key[32]; uint8_t data[256]; size_t len; } storage[10];
+static int storage_count, flash_writes, config_writes;
+static void reset_storage(void) { memset(storage, 0, sizeof(storage)); storage_count = flash_writes = config_writes = 0; save_fails = false; }
+static uint32_t get32(const uint8_t *v) { return (uint32_t)v[0] | ((uint32_t)v[1] << 8) | ((uint32_t)v[2] << 16) | ((uint32_t)v[3] << 24); }
 static int mouse_reports;
 static int8_t mouse_dx, mouse_dy;
 static uint8_t mouse_buttons;
@@ -199,17 +204,145 @@ static void test_usb_mouse_merge(void)
 }
 static void test_runtime_commands(void)
 {
-    setup(); saved_valid = save_fails = false; gyro_runtime_init();
+    setup(); reset_storage(); gyro_runtime_init();
     uint8_t cmd[63] = {1, 7}; memcpy(cmd + 2, c, 40);
     gyro_runtime_command(cmd, sizeof(cmd)); gyro_runtime_get_config(status);
     assert(status[1] == GYRO_MOUSE && status[40] == 1 && status[41] == 0 && status[42] == 7);
-    cmd[0] = 2; cmd[1] = 8; gyro_runtime_command(cmd, 63); assert(saved_valid);
+    cmd[0] = 2; cmd[1] = 8; gyro_runtime_command(cmd, 63); assert(flash_writes == 1);
     gyro_runtime_init(); gyro_runtime_get_config(status); assert(status[1] == GYRO_MOUSE);
-    save_fails = true; gyro_runtime_command(cmd, 63); gyro_runtime_get_config(status); assert(status[41] == 2);
+    cmd[0] = 1; c[10] = 200; memcpy(cmd + 2, c, 40); gyro_runtime_command(cmd, 63);
+    save_fails = true; cmd[0] = 2; gyro_runtime_command(cmd, 63); gyro_runtime_get_config(status); assert(status[41] == 2);
     cmd[0] = 1; cmd[2] = 99; gyro_runtime_command(cmd, 63); gyro_runtime_get_config(status); assert(status[41] == 1 && status[1] == GYRO_MOUSE);
     cmd[0] = 4; gyro_runtime_command(cmd, 63); gyro_runtime_get_config(status); assert(status[1] == GYRO_OFF);
     cmd[0] = 3; gyro_runtime_command(cmd, 63); gyro_runtime_get_status(status); assert(status[1] & 4);
     gyro_runtime_on_disconnect(); gyro_runtime_poll(false, host); gyro_runtime_get_status(status); assert(!(status[1] & 4));
+}
+
+static void runtime_tick(uint32_t us, bool edge)
+{
+    host += us; timestamp += us * 3; put32(p + 27, timestamp); memcpy(out, p, 63);
+    gyro_runtime_process(p, out, host, edge);
+}
+static void runtime_cmd(uint8_t command, uint8_t value)
+{
+    uint8_t cmd[63] = {0}; cmd[0] = command; cmd[1] = 1; cmd[2] = value;
+    if (command == 1) memcpy(cmd + 2, c, 40);
+    gyro_runtime_command(cmd, 63); gyro_runtime_get_config(status); assert(status[41] == 0);
+}
+static void global_defaults(uint8_t cmd[63])
+{
+    memset(cmd, 0, 63); cmd[0] = 8; cmd[1] = 1; cmd[4] = 1;
+    for (int i = 0; i < 4; i++) cmd[5 + i] = (uint8_t)i;
+    cmd[9] = 0; cmd[10] = 1;
+}
+static void test_hysteresis_ads_and_fine(void)
+{
+    setup(); c[2] = GYRO_HOLD; c[3] = 1; c[37] = 55; put16(c + 38, 50);
+    assert(gyro_set_config(c, 40)); put16(p + 17, 1600);
+    p[4] = 64; tick(1000, false); tick(10000, false);
+    gyro_get_status(status); assert(get32(status + 32) == 5000);
+    p[4] = 60; tick(1000, false); gyro_get_status(status); assert(status[1] & 2);
+    p[4] = 54; tick(1000, false); gyro_get_status(status); assert(!(status[1] & 2));
+    p[4] = 60; tick(1000, false); gyro_get_status(status); assert(!(status[1] & 2));
+    p[4] = 64; gyro_set_modifiers(false, 50); tick(1000, false); gyro_get_status(status);
+    assert(get32(status + 32) == 2500);
+    gyro_set_modifiers(true, 100); tick(1000, false); peek(0, 0);
+    c[37] = 65; assert(!gyro_set_config(c, 40));
+    c[0] = 1; c[37] = c[38] = c[39] = 0; assert(gyro_set_config(c, 40));
+    gyro_get_config(c); assert(c[0] == 2 && c[37] == 64 && c[38] == 100);
+}
+int bt_settings_set_bin(const char *, const uint8_t *, size_t);
+static void test_profile_bank_and_recovery(void)
+{
+    setup(); reset_storage(); gyro_runtime_init(); runtime_cmd(1, 0); runtime_cmd(2, 0);
+    int first = flash_writes; runtime_cmd(2, 0); assert(first == flash_writes);
+    runtime_cmd(6, 1); put16(c + 10, 200); runtime_cmd(1, 0); runtime_cmd(7, 1);
+    put16(p + 17, 1600); runtime_tick(1000, false); runtime_tick(10000, false);
+    gyro_runtime_get_status(status); assert(get32(status + 32) == 20000);
+    runtime_cmd(6, 0); gyro_runtime_get_config(status); assert(status[10] == 100 && status[45] == 1);
+    runtime_cmd(6, 1); runtime_cmd(2, 0); gyro_runtime_init(); gyro_runtime_get_profiles(status);
+    assert(status[3] == 1); /* saved active slot, not edit selection */
+    for (int i = 0; i < storage_count; i++) if (!strcmp(storage[i].key, "gyro_bank_b_v2")) storage[i].data[20] ^= 1;
+    gyro_runtime_init(); gyro_runtime_get_profiles(status); assert(status[3] == 0); /* older valid bank */
+    reset_storage(); setup(); c[0] = 1; c[37] = c[38] = c[39] = 0; c[35] = 1; c[36] = 2;
+    bt_settings_set_bin("gyro_cfg_v1", c, 40); gyro_runtime_init(); gyro_runtime_get_profiles(status);
+    assert(status[4] == 1 && status[7] == 255 && status[8] == 0);
+    p[48] = 0x20; runtime_tick(1000, true); runtime_tick(10000, true);
+    gyro_runtime_get_status(status); assert(status[1] & 2);
+    p[48] = 0; runtime_tick(1000, true); gyro_runtime_get_status(status); assert(!(status[1] & 2));
+}
+static void test_actions_and_slot_debounce(void)
+{
+    setup(); reset_storage(); gyro_runtime_init(); runtime_cmd(1, 0);
+    runtime_cmd(6, 1); runtime_cmd(1, 0); runtime_cmd(6, 0);
+    uint8_t cmd[63]; global_defaults(cmd);
+    uint8_t *a = cmd + 11; a[0] = 1; a[3] = 1; put16(a + 6, 50); put32(a + 8, (1u << 12) | (1u << 11));
+    gyro_runtime_command(cmd, 63); runtime_tick(1000, false); p[9] = 1; p[8] = 0x80;
+    runtime_tick(1000, false); gyro_runtime_get_profiles(status); assert(status[3] == 1);
+    assert(!(out[9] & 1) && !(out[8] & 0x80));
+    runtime_tick(1000, false); gyro_runtime_get_profiles(status); assert(status[3] == 1);
+    int writes = flash_writes; gyro_runtime_poll(true, host + 500000); assert(flash_writes == writes);
+    gyro_runtime_poll(true, host + 1000000); assert(flash_writes == writes + 1);
+    gyro_runtime_init(); gyro_runtime_get_profiles(status); assert(status[3] == 1);
+    /* Long press fires once and re-arms only on release. */
+    global_defaults(cmd); a = cmd + 11; a[0] = 4; a[1] = 1; put16(a + 4, 300); put16(a + 6, 50); put32(a + 8, 1u << 11);
+    gyro_runtime_command(cmd, 63); p[9] = p[8] = 0; runtime_tick(1000, false);
+    p[8] = 0x80; runtime_tick(1000, false);
+    for (int i = 0; i < 29; i++) runtime_tick(10000, false);
+    gyro_runtime_get_config(status); assert(!status[48]); runtime_tick(10000, false);
+    gyro_runtime_get_config(status); assert(status[48]); runtime_tick(10000, false);
+    gyro_runtime_get_config(status); assert(status[48]);
+    /* Double click needs two short presses, and duplicate bindings are rejected atomically. */
+    a[0] = 5; a[1] = 2; gyro_runtime_command(cmd, 63);
+    p[8] = 0; runtime_tick(1000, false); p[8] = 0x80; runtime_tick(1000, false);
+    p[8] = 0; runtime_tick(1000, false); p[8] = 0x80; runtime_tick(1000, false);
+    gyro_runtime_get_status(status); assert(status[1] & 4);
+    memcpy(cmd + 23, cmd + 11, 12); gyro_runtime_command(cmd, 63); gyro_runtime_get_config(status); assert(status[41] == 1);
+    /* A held key across reconnect cannot fire. */
+    gyro_runtime_on_disconnect(); gyro_runtime_poll(false, host); runtime_tick(1000, false);
+    gyro_runtime_get_status(status); assert(!(status[1] & 4));
+}
+static void test_deferred_control_and_metrics(void)
+{
+    setup(); reset_storage(); diagnostics_init(); dongle_control_init();
+    uint8_t cmd[127] = {5, 1}, report[127];
+    dongle_control_command(0xFB, cmd, 2); assert(remap_get_active_profile() == 1 && !flash_writes);
+    remap_poll(host + 999999); assert(!flash_writes); remap_poll(host + 1000000); assert(flash_writes == 1);
+    remap_switch_profile(1); remap_poll(host + 2000000); assert(flash_writes == 1);
+    cmd[1] = 2; dongle_control_command(0xFB, cmd, 2); dongle_control_get(0xF7, report); assert(report[41] == 1);
+    cmd[0] = 1; cmd[1] = 0;
+    remap_entry_t table[31]; for (int i = 0; i < 31; i++) table[i] = (remap_entry_t){0, (uint8_t)i, 0, 0};
+    table[0].value = 1; memcpy(cmd + 2, table, sizeof(table)); cmd[126] = 23;
+    dongle_control_command(0xFB, cmd, 127); dongle_control_get(0xF7, report);
+    assert(!report[41] && report[42] == 23 && report[43] == 0xFB);
+    assert(remap_get_profile_table(0)[0].value == 1);
+    int writes = flash_writes; dongle_control_command(0xFB, cmd, 127); assert(flash_writes == writes);
+    memset(cmd, 0, 127); cmd[0] = 2; dongle_control_command(0xF6, cmd, 1); assert(config_writes == 1);
+    dongle_control_command(0xF6, cmd, 1); assert(config_writes == 1);
+    app_config.inactive_time = 4; save_fails = true; dongle_control_command(0xF6, cmd, 1);
+    dongle_control_get(0xF7, report); assert(report[41] == 2);
+    app_config.inactive_time = 8; dongle_control_get(0xF7, report); assert(report[8] != 8); /* published snapshot */
+    diagnostics_input(1000); diagnostics_input(2000); diagnostics_input(6000); diagnostics_input(66000);
+    diagnostics_process(57); diagnostics_usb_busy(); diagnostics_queue(false, 8); diagnostics_save(123, false);
+    diagnostics_get(status); assert(get32(status + 2) == 4 && get32(status + 6) == 1000 && get32(status + 26) == 1);
+    assert(get32(status + 18) == 57 && get32(status + 30) == 1 && get32(status + 34) == 1 && status[38] == 8 && status[39] == 2);
+}
+
+static void test_calibration_timeout_and_retry(void)
+{
+    setup(); reset_storage(); gyro_runtime_init(); runtime_cmd(3, 0);
+    gyro_runtime_take_feedback();
+    gyro_runtime_poll(true, 1000); gyro_runtime_poll(true, 30001000);
+    gyro_runtime_get_status(status); assert((status[1] & 32) && !(status[1] & 4));
+    assert(gyro_runtime_take_feedback() == 4);
+    gyro_runtime_poll(true, 30002000); assert(!gyro_runtime_take_feedback());
+    runtime_cmd(3, 0); gyro_runtime_get_status(status); assert((status[1] & 4) && !(status[1] & 32));
+    gyro_runtime_take_feedback(); gyro_runtime_poll(true, 1000); runtime_cmd(5, 0);
+    gyro_runtime_poll(true, 2000); assert(!gyro_runtime_take_feedback()); /* cancelling is not success */
+    runtime_cmd(7, 1); save_fails = true;
+    gyro_runtime_poll(true, 1001000); int writes = flash_writes;
+    save_fails = false; gyro_runtime_poll(true, 1002000); assert(writes == flash_writes);
+    gyro_runtime_poll(true, 6001000); assert(writes + 1 == flash_writes);
 }
 
 /* Hardware/flash stand-ins. No SDK or connected controller is needed. */
@@ -222,19 +355,27 @@ int usb_gamepad_send_mouse_report(uint8_t buttons, int8_t dx, int8_t dy, int8_t 
     if (!endpoint_ready) return -1;
     mouse_reports++; mouse_buttons = buttons; mouse_dx = dx; mouse_dy = dy; return 0;
 }
-int ef_get_env_blob(const char *key, void *data, size_t len, size_t *saved_len) { *saved_len = 0; return -1; }
-int ef_set_env_blob(const char *key, const void *data, size_t len) { return 0; }
+void config_set(const uint8_t *data, uint16_t len) { memcpy(&app_config, data, len < sizeof(app_config) ? len : sizeof(app_config)); }
+bool config_save(void) { config_writes++; return !save_fails; }
 int bt_settings_get_bin(const char *key, uint8_t *data, size_t len, size_t *saved_len)
 {
-    *saved_len = saved_valid ? sizeof(saved) : 0;
-    if (!saved_valid) return -1;
-    assert(len == sizeof(saved)); memcpy(data, saved, len); return 0;
+    *saved_len = 0;
+    for (int i = 0; i < storage_count; i++) if (!strcmp(key, storage[i].key)) {
+        *saved_len = storage[i].len;
+        memcpy(data, storage[i].data, len < storage[i].len ? len : storage[i].len); return 0;
+    }
+    return -1;
 }
 int bt_settings_set_bin(const char *key, const uint8_t *data, size_t len)
 {
     if (save_fails) return -1;
-    assert(len == sizeof(saved)); memcpy(saved, data, len); saved_valid = true; return 0;
+    int i; for (i = 0; i < storage_count; i++) if (!strcmp(key, storage[i].key)) break;
+    assert(i < 10 && len <= sizeof(storage[i].data));
+    if (i == storage_count) { strcpy(storage[i].key, key); storage_count++; }
+    memcpy(storage[i].data, data, len); storage[i].len = len; flash_writes++; return 0;
 }
+int ef_get_env_blob(const char *key, void *data, size_t len, size_t *saved_len) { return bt_settings_get_bin(key, data, len, saved_len); }
+int ef_set_env_blob(const char *key, const void *data, size_t len) { return bt_settings_set_bin(key, data, len); }
 bool bt_hid_host_get_cached_feature(uint8_t id, const uint8_t **data, uint16_t *len) { return false; }
 
 int main(void)
@@ -250,5 +391,10 @@ int main(void)
     puts("loss/validation"); test_gap_and_validation();
     puts("mouse merge"); test_usb_mouse_merge();
     puts("runtime"); test_runtime_commands();
-    puts("gyro: 10 test groups passed"); return 0;
+    puts("hysteresis/ADS/fine"); test_hysteresis_ads_and_fine();
+    puts("profile bank/recovery"); test_profile_bank_and_recovery();
+    puts("actions/debounce"); test_actions_and_slot_debounce();
+    puts("control/metrics"); test_deferred_control_and_metrics();
+    puts("calibration timeout/retry"); test_calibration_timeout_and_retry();
+    puts("gyro: 15 test groups passed"); return 0;
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { defaults, encodeConfig, decodeConfig, featureBytes, decodeStatus } from '../web/protocol.mjs';
+import { defaults, encodeConfig, decodeConfig, featureBytes, decodeStatus, globalDefaults, encodeGlobal, decodeGlobal, decodeProfiles, decodeDiagnostics, importBundle } from '../web/protocol.mjs';
 
 const c = defaults();
 assert.deepEqual(decodeConfig(encodeConfig(c)), c);
@@ -29,3 +29,25 @@ const s = decodeStatus(status);
 assert.equal(s.raw[0], -300); assert.equal(s.rates[1], 2000.5);
 assert.equal(s.edgeProfile, 2); assert.equal(s.dongleProfile, 1);
 console.log('web protocol: round trips, ranges, profile masks, HID framing and telemetry passed');
+
+const g = globalDefaults();
+g.actions[0] = { action: 1, gesture: 1, target: 0, suppress: 1, hold: 300, fine: .5, buttons: (1 << 12) | (1 << 11) };
+assert.equal(encodeConfig(c)[0], 2);
+assert.deepEqual(decodeGlobal(encodeGlobal(g)), g);
+const gp = new Uint8Array(63); gp.set([2, 4, 1, 2]); gp.set(encodeGlobal(g).slice(0, 9), 4); gp.set(encodeGlobal(g).slice(9), 15);
+assert.deepEqual(decodeProfiles(gp), { edit: 1, active: 2, settings: g });
+for (const changes of [{ source: 3 }, { manual: 4 }, { edge: [0, 1] }, { dongle: [0, 4] }, { feedback: 2 }]) assert.throws(() => encodeGlobal({ ...g, ...changes }));
+for (const changes of [{ buttons: 0 }, { gesture: 3 }, { action: 6, gesture: 2 }, { action: 6, fine: 1.01 }, { suppress: 2 }, { fine: NaN }]) {
+  const changed = structuredClone(g); Object.assign(changed.actions[0], changes); assert.throws(() => encodeGlobal(changed));
+}
+const duplicate = structuredClone(g); duplicate.actions[1] = { ...duplicate.actions[0] }; assert.throws(() => encodeGlobal(duplicate));
+assert.throws(() => encodeConfig({ ...c, threshold: 50, releaseThreshold: 60 }));
+const legacy = encodeConfig(c); legacy[0] = 1; legacy.fill(0, 37); assert.deepEqual(decodeConfig(legacy), c);
+const old = { ...c, profileSource: 1, profiles: 2 }; delete old.releaseThreshold; delete old.adsMultiplier;
+const migrated = importBundle({ version: 1, config: old });
+assert.deepEqual(migrated.settings.edge, [255, 0, 255, 255]); assert.equal(migrated.profiles[0].profileSource, 0);
+assert.deepEqual(importBundle({ version: 2, profiles: [c, c, c, c], settings: g }), { profiles: [c, c, c, c], settings: g });
+assert.throws(() => importBundle({ version: 2, profiles: [c], settings: g }));
+const perf = new Uint8Array(63); perf[0] = 2; new DataView(perf.buffer).setUint32(34, 17, true);
+assert.equal(decodeDiagnostics(perf).queueDrops, 17);
+console.log('web protocol: v2 bank, actions, hysteresis, legacy migration, import and diagnostics passed');

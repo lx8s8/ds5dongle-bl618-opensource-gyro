@@ -7,7 +7,10 @@
 static struct gyro_config cfg;
 static struct {
     bool connected, active, held, qualified, latched, timestamp_valid, toggle_armed;
-    bool factory, calibrating, calibrated;
+    bool factory, calibrating, calibrated, trigger_held, ads_held, paused;
+    bool cal_clock, cal_failed;
+    uint32_t cal_started;
+    uint16_t fine_multiplier;
     uint32_t last_sensor, last_host, held_since, dt_us, packets, buttons;
     float scale[3], factory_bias[3], bias[3], rate[3], filtered[2], pending[2];
     int16_t raw[3], accel[3];
@@ -49,6 +52,7 @@ static void encode(const struct gyro_config *c, uint8_t *p)
     put16(p + 26, c->accel_start_dps); put16(p + 28, c->accel_end_dps);
     put32(p + 30, c->buttons); p[34] = c->stick_blend;
     p[35] = c->profile_source; p[36] = c->profile_mask;
+    p[37] = c->release_threshold; put16(p + 38, c->ads_multiplier);
 }
 
 void gyro_defaults(uint8_t out[GYRO_CONFIG_SIZE])
@@ -60,6 +64,7 @@ void gyro_defaults(uint8_t out[GYRO_CONFIG_SIZE])
         .noise_dps = 50, .max_turn_dps = 360, .stick_deadzone = 100,
         .stick_power = 100, .accel_multiplier = 100,
         .accel_start_dps = 30, .accel_end_dps = 180,
+        .release_threshold = 64, .ads_multiplier = 100,
     };
     encode(&defaults, out);
 }
@@ -68,6 +73,7 @@ void gyro_reset_stream(bool forget_calibration)
 {
     motion.active = motion.held = motion.qualified = motion.latched = false;
     motion.toggle_armed = false;
+    motion.trigger_held = motion.ads_held = false;
     motion.connected = motion.timestamp_valid = false;
     motion.selected_profile = 255;
     motion.dt_us = 0;
@@ -76,15 +82,16 @@ void gyro_reset_stream(bool forget_calibration)
     motion.cal_us = 0; motion.cal_samples = 0;
     if (forget_calibration) {
         motion.factory = motion.calibrating = motion.calibrated = false;
+        motion.cal_clock = motion.cal_failed = false;
         memset(motion.bias, 0, sizeof(motion.bias));
         memset(motion.factory_bias, 0, sizeof(motion.factory_bias));
         for (int i = 0; i < 3; i++) motion.scale[i] = 1.0f / 16.0f;
     }
 }
 
-bool gyro_set_config(const uint8_t *p, uint16_t len)
+static bool decode(const uint8_t *p, uint16_t len, struct gyro_config *result)
 {
-    if (!p || len != GYRO_CONFIG_SIZE || p[0] != GYRO_CONFIG_VERSION)
+    if (!p || len != GYRO_CONFIG_SIZE || (p[0] != 1 && p[0] != GYRO_CONFIG_VERSION))
         return false;
     struct gyro_config c = {
         .output = p[1], .activation = p[2], .trigger = p[3], .threshold = p[4],
@@ -97,6 +104,8 @@ bool gyro_set_config(const uint8_t *p, uint16_t len)
         .accel_end_dps = u16(p + 28), .buttons = u32(p + 30),
         .stick_blend = p[34],
         .profile_source = p[35], .profile_mask = p[36],
+        .release_threshold = p[0] == 1 ? p[4] : p[37],
+        .ads_multiplier = p[0] == 1 ? 100 : u16(p + 38),
     };
     if (c.output > GYRO_RIGHT_STICK || c.activation > GYRO_HOLD_OFF ||
         c.trigger > 2 || !c.threshold || (c.flags & ~15u) ||
@@ -112,9 +121,25 @@ bool gyro_set_config(const uint8_t *p, uint16_t len)
         c.profile_source > 2 || (c.profile_mask & ~15u) ||
         (c.profile_source && !c.profile_mask) ||
         (c.profile_source == 2 && c.profile_mask > 3) ||
+        !c.release_threshold || c.release_threshold > c.threshold ||
+        !c.ads_multiplier || c.ads_multiplier > 400 ||
         (c.activation != GYRO_ALWAYS && !c.trigger && !c.buttons))
         return false;
-    for (int i = 37; i < GYRO_CONFIG_SIZE; i++) if (p[i]) return false;
+    if (p[0] == 1 && (p[37] || p[38] || p[39])) return false;
+    *result = c;
+    return true;
+}
+
+bool gyro_validate_config(const uint8_t *p, uint16_t len)
+{
+    struct gyro_config c;
+    return decode(p, len, &c);
+}
+
+bool gyro_set_config(const uint8_t *p, uint16_t len)
+{
+    struct gyro_config c;
+    if (!decode(p, len, &c)) return false;
     cfg = c;
     gyro_reset_stream(false);
     return true;
@@ -124,6 +149,7 @@ void gyro_init(void)
 {
     uint8_t defaults[GYRO_CONFIG_SIZE];
     memset(&motion, 0, sizeof(motion));
+    motion.fine_multiplier = 100;
     gyro_defaults(defaults);
     gyro_set_config(defaults, sizeof(defaults));
     gyro_reset_stream(true);
@@ -159,18 +185,20 @@ void gyro_start_calibration(void)
 {
     gyro_reset_stream(false);
     motion.calibrating = true;
+    motion.cal_clock = motion.cal_failed = false;
 }
 
 void gyro_clear_calibration(void)
 {
     motion.calibrating = motion.calibrated = false;
+    motion.cal_clock = motion.cal_failed = false;
     motion.cal_us = 0; motion.cal_samples = 0;
     memset(motion.bias, 0, sizeof(motion.bias));
     memset(motion.filtered, 0, sizeof(motion.filtered));
     memset(motion.pending, 0, sizeof(motion.pending));
 }
 
-static uint32_t buttons(const uint8_t *p, bool edge)
+uint32_t gyro_buttons(const uint8_t *p, bool edge)
 {
     uint32_t b = (p[7] >> 4) | ((uint32_t)p[8] << 4) |
                  ((uint32_t)(p[9] & 7) << 12);
@@ -184,24 +212,23 @@ static uint32_t buttons(const uint8_t *p, bool edge)
     return b;
 }
 
-static bool condition(const uint8_t *p)
+static bool condition(void)
 {
-    if (cfg.trigger && p[3 + cfg.trigger] < cfg.threshold) return false;
+    if (cfg.trigger && !motion.trigger_held) return false;
     uint32_t selected = motion.buttons & cfg.buttons;
     return !cfg.buttons || ((cfg.flags & GYRO_REQUIRE_ALL) ?
                             selected == cfg.buttons : selected != 0);
 }
 
-static void suppress(uint8_t *p)
+void gyro_suppress_buttons(uint8_t *p, uint32_t b)
 {
-    uint32_t b = cfg.buttons;
     p[7] &= (uint8_t)~((b & 15) << 4);
     p[8] &= (uint8_t)~((b >> 4) & 255);
     p[9] &= (uint8_t)~(((b >> 12) & 7) | (((b >> 19) & 15) << 4));
     /* A diagonal containing a selected direction is neutralised as a whole. */
-    if (motion.buttons & b & (15u << 15)) p[7] = (p[7] & 0xF0) | 8;
-    if (cfg.trigger == 1 || (b & (1u << 6))) { p[4] = 0; p[8] &= ~4u; }
-    if (cfg.trigger == 2 || (b & (1u << 7))) { p[5] = 0; p[8] &= ~8u; }
+    if (gyro_buttons(p, false) & b & (15u << 15)) p[7] = (p[7] & 0xF0) | 8;
+    if (b & (1u << 6)) { p[4] = 0; p[8] &= ~4u; }
+    if (b & (1u << 7)) { p[5] = 0; p[8] &= ~8u; }
     if (b & (1u << 23)) { p[32] |= 0x80; p[36] |= 0x80; }
 }
 
@@ -248,8 +275,19 @@ static float stick_value(float rate)
     return copysignf(v * 127.0f, rate);
 }
 
+static void calibration_timeout(uint32_t now_us)
+{
+    if (!motion.calibrating) return;
+    if (!motion.cal_clock) { motion.cal_started = now_us; motion.cal_clock = true; }
+    if (now_us - motion.cal_started >= 30000000u) {
+        motion.calibrating = false; motion.cal_failed = true;
+        motion.cal_us = 0; motion.cal_samples = 0;
+    }
+}
+
 void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool edge)
 {
+    calibration_timeout(host_us);
     uint32_t sensor = u32(raw + 27);
     bool had_timestamp = motion.timestamp_valid;
     uint32_t delta = sensor - motion.last_sensor; /* wrap is intentional */
@@ -261,7 +299,10 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     motion.last_sensor = sensor; motion.last_host = host_us;
     motion.timestamp_valid = motion.connected = true;
     motion.packets++;
-    motion.buttons = buttons(raw, edge);
+    motion.buttons = gyro_buttons(raw, edge);
+    motion.trigger_held = cfg.trigger && raw[3 + cfg.trigger] >=
+        (motion.trigger_held ? cfg.release_threshold : cfg.threshold);
+    motion.ads_held = raw[4] >= (motion.ads_held ? cfg.release_threshold : cfg.threshold);
     float uncorrected[3];
     for (int i = 0; i < 3; i++) {
         motion.raw[i] = i16(raw + 15 + i * 2);
@@ -287,7 +328,7 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     }
     bool allowed = !cfg.profile_source ||
                    (profile < 4 && (cfg.profile_mask & (1u << profile)));
-    bool pressed = allowed && condition(raw);
+    bool pressed = allowed && condition();
     if (!pressed) motion.toggle_armed = true;
     if (pressed && !motion.held) motion.held_since = host_us;
     bool qualified = pressed && (host_us - motion.held_since >= (uint32_t)cfg.hold_ms * 1000);
@@ -300,8 +341,9 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
                   (cfg.activation == GYRO_HOLD && qualified) ||
                   (cfg.activation == GYRO_TOGGLE && motion.latched) ||
                   (cfg.activation == GYRO_HOLD_OFF && !qualified);
-    active = active && allowed && cfg.output != GYRO_OFF && !calibrating;
-    if (allowed && cfg.output && (cfg.flags & GYRO_SUPPRESS)) suppress(out);
+    active = active && allowed && cfg.output != GYRO_OFF && !calibrating && !motion.paused;
+    if (allowed && cfg.output && (cfg.flags & GYRO_SUPPRESS))
+        gyro_suppress_buttons(out, cfg.buttons | (cfg.trigger ? 1u << (5 + cfg.trigger) : 0));
 
     float hand[2] = { motion.rate[cfg.horizontal_axis ? 2 : 1], -motion.rate[0] };
     if (cfg.flags & GYRO_INVERT_X) hand[0] = -hand[0];
@@ -318,7 +360,9 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     motion.active = active;
     for (int i = 0; i < 2; i++) {
         float target = hand[i] * tighten * acceleration *
-                       (i == 0 ? cfg.sensitivity_x : cfg.sensitivity_y) / 100.0f;
+                       (i == 0 ? cfg.sensitivity_x : cfg.sensitivity_y) / 100.0f *
+                       (motion.ads_held ? cfg.ads_multiplier / 100.0f : 1.0f) *
+                       (motion.fine_multiplier / 100.0f);
         /* Reset history on activation so the previous aiming session cannot
          * leak a tail into the next one. The first packet has no integration. */
         if (!active) motion.filtered[i] = motion.pending[i] = 0;
@@ -338,6 +382,7 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
 
 void gyro_idle(uint32_t host_us)
 {
+    calibration_timeout(host_us);
     if (motion.connected && host_us - motion.last_host > 100000)
         gyro_reset_stream(false);
 }
@@ -355,12 +400,18 @@ void gyro_mouse_consume(int8_t dx, int8_t dy)
 
 void gyro_set_dongle_profile(uint8_t profile) { motion.dongle_profile = profile; }
 
+void gyro_set_modifiers(bool paused, uint16_t fine_multiplier)
+{
+    motion.paused = paused;
+    motion.fine_multiplier = fine_multiplier;
+}
+
 void gyro_get_status(uint8_t p[GYRO_REPORT_SIZE])
 {
     memset(p, 0, GYRO_REPORT_SIZE);
     p[0] = GYRO_CONFIG_VERSION;
     p[1] = motion.connected | (motion.active << 1) | (motion.calibrating << 2) |
-           (motion.calibrated << 3) | (motion.factory << 4);
+           (motion.calibrated << 3) | (motion.factory << 4) | (motion.cal_failed << 5);
     p[2] = cfg.output;
     p[3] = (uint8_t)fminf(100, motion.cal_us / 20000.0f);
     put32(p + 4, motion.dt_us);

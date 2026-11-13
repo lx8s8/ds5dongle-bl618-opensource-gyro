@@ -1,5 +1,6 @@
 #include "remap.h"
 #include "gyro.h"
+#include "diagnostics.h"
 #include "usb_gamepad.h"
 #include "debug_log.h"
 #include "easyflash.h"
@@ -48,6 +49,10 @@ static remap_entry_t g_profiles[REMAP_PROFILE_COUNT][REMAP_BTN_COUNT];
 static uint8_t active_profile = 0;
 static bool g_remap_is_identity = true;
 static uint8_t last_kbd_report[8];
+static remap_entry_t saved_profiles[REMAP_PROFILE_COUNT][REMAP_BTN_COUNT];
+static bool profile_saved[REMAP_PROFILE_COUNT], active_dirty;
+static uint8_t persisted_profile;
+static uint32_t profile_changed;
 
 /* Mouse mode state */
 static int16_t  tp_mouse_last_x = -1;
@@ -206,6 +211,7 @@ static void load_single_profile(uint8_t idx)
     ef_get_env_blob(profile_keys[idx], g_profiles[idx],
                     sizeof(g_profiles[idx]), &len);
     size_t n_loaded = len / sizeof(remap_entry_t);
+    if (n_loaded > REMAP_BTN_COUNT) n_loaded = REMAP_BTN_COUNT;
     for (size_t i = 0; i < n_loaded; i++)
         sanitize_entry(&g_profiles[idx][i], (uint8_t)i);
     /* Old format (23 entries): indices 19-22 had different meaning (TP_UP/DOWN/LEFT/RIGHT).
@@ -231,6 +237,8 @@ void remap_init(void)
     g_remap_is_identity = true;
     memset(last_kbd_report, 0, sizeof(last_kbd_report));
     mouse_pending_x = mouse_pending_y = 0;
+    memset(profile_saved, 0, sizeof(profile_saved));
+    active_dirty = false; persisted_profile = 0;
 }
 
 void remap_load(void)
@@ -247,6 +255,7 @@ void remap_load(void)
         active_profile = 0;
 
     update_identity_cache();
+    persisted_profile = active_profile;
     LOG_INF("[REMAP] Loaded profiles, active=%d, identity=%d\n",
             active_profile, (int)g_remap_is_identity);
 }
@@ -259,8 +268,16 @@ bool remap_save(void)
 bool remap_save_profile(uint8_t profile)
 {
     if (profile >= REMAP_PROFILE_COUNT) return false;
+    if (profile_saved[profile] && !memcmp(saved_profiles[profile], g_profiles[profile], sizeof(g_profiles[profile])))
+        return true;
+    uint32_t start = (uint32_t)bflb_mtimer_get_time_us();
     int r = ef_set_env_blob(profile_keys[profile],
                             g_profiles[profile], sizeof(g_profiles[profile]));
+    diagnostics_save((uint32_t)bflb_mtimer_get_time_us() - start, r == 0);
+    if (r == 0) {
+        memcpy(saved_profiles[profile], g_profiles[profile], sizeof(g_profiles[profile]));
+        profile_saved[profile] = true;
+    }
     return r == 0;
 }
 
@@ -308,12 +325,23 @@ void remap_reset_profile(uint8_t profile)
 
 void remap_switch_profile(uint8_t profile)
 {
-    if (profile >= REMAP_PROFILE_COUNT) return;
+    if (profile >= REMAP_PROFILE_COUNT || profile == active_profile) return;
     active_profile = profile;
     update_identity_cache();
-    ef_set_env_blob("remap_prof", &active_profile, 1);
+    active_dirty = active_profile != persisted_profile;
+    profile_changed = (uint32_t)bflb_mtimer_get_time_us();
     LOG_INF("[REMAP] Switched to profile %d, identity=%d\n",
             active_profile, (int)g_remap_is_identity);
+}
+
+void remap_poll(uint32_t now_us)
+{
+    if (!active_dirty || (int32_t)(now_us - profile_changed) < 1000000) return;
+    uint32_t start = (uint32_t)bflb_mtimer_get_time_us();
+    bool ok = ef_set_env_blob("remap_prof", &active_profile, 1) == 0;
+    diagnostics_save((uint32_t)bflb_mtimer_get_time_us() - start, ok);
+    if (ok) { persisted_profile = active_profile; active_dirty = false; }
+    else profile_changed = now_us + 4000000u;
 }
 
 uint8_t remap_get_active_profile(void)
@@ -585,7 +613,7 @@ void remap_mouse_tick(const uint8_t *p)
             mouse_pending_x -= dx;
             mouse_pending_y -= dy;
             last_mouse_buttons = buttons;
-        }
+        } else diagnostics_usb_busy();
     }
 }
 

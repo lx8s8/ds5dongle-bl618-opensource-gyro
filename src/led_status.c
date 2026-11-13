@@ -112,7 +112,7 @@ void led_status_set(enum led_pattern pattern)
     }
 }
 
-void led_status_tick(void)
+static void board_tick(void)
 {
     tick_count++;
     pattern_age++;
@@ -287,7 +287,7 @@ void led_status_set(enum led_pattern pattern)
     }
 }
 
-void led_status_tick(void)
+static void board_tick(void)
 {
     tick_count++;
     pattern_age++;
@@ -437,7 +437,7 @@ void led_status_set(enum led_pattern pattern)
     }
 }
 
-void led_status_tick(void)
+static void board_tick(void)
 {
     tick_count++;
     pattern_age++;
@@ -545,4 +545,44 @@ void led_status_lock(void)
 void led_status_unlock(void)
 {
     led_locked = false;
+}
+
+/* Overlay is owned by led_task; usb_task posts an aligned word; consuming never clears a concurrent post. */
+static volatile uint32_t pending_notice;
+static uint32_t consumed_notice;
+static uint8_t notice_tick, notice_ticks;
+static bool notifying;
+static enum led_pattern notice_base;
+void led_status_notify(uint8_t flashes)
+{
+    if (flashes >= 1 && flashes <= 4) pending_notice = ((pending_notice + 8u) & ~7u) | flashes;
+}
+static void notification_led(bool on)
+{
+    all_off();
+#if LED_STYLE == LED_AIM61
+    set_blue(on);
+#elif LED_STYLE == LED_M0SDOCK
+    set_led1(on);
+#else
+    set_led(on);
+#endif
+}
+void led_status_tick(void)
+{
+    if (notifying && (current_pattern != notice_base || led_locked)) notifying = false;
+    uint32_t posted = pending_notice;
+    uint8_t requested = posted != consumed_notice ? (posted & 7u) : 0;
+    consumed_notice = posted;
+    if (requested && !led_locked && (current_pattern == LED_GREEN_SOLID || current_pattern == LED_OFF)) {
+        notice_base = current_pattern; notice_tick = 0; notice_ticks = requested * 4; notifying = true;
+    }
+    if (notifying) {
+        if (notice_tick < notice_ticks) {
+            notification_led((notice_tick++ % 4) < 2);
+            return;
+        }
+        notifying = false; led_status_set(notice_base);
+    }
+    board_tick();
 }

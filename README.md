@@ -1,6 +1,6 @@
 # DS5Dongle BL618
 
-This branch adds experimental firmware gyro-to-mouse/right-stick mapping, configurable hold/toggle gates, Edge paddle sources, native Edge Fn profile binding and dongle profile binding, plus a local WebHID configuration/debug page. Mapping defaults to off. See [the gyro guide](docs/GYRO_CN.md) for setup, protocol, references and verification limits, and [the proposed improvements](docs/ROADMAP_CN.md) for next steps. Host tests and all six firmware builds/packages have passed in GitHub Actions; hardware validation is still required. Run host tests with `make -C tests check`.
+G2 adds four independent firmware gyro profiles, mouse/right-stick output, native Edge Fn bindings, configurable controller shortcuts, trigger hysteresis, L2 ADS sensitivity, board LED feedback and receiver diagnostics. Standard DualSense controllers can switch profiles, pause mapping, calibrate and hold a precision modifier without keeping the WebHID page open. All profiles default to off. See [the gyro guide](docs/GYRO_CN.md), [feature status](docs/ROADMAP_CN.md) and [hardware checklist](docs/HARDWARE_TEST_CN.md). Run `make -C tests check` for host tests; GitHub Actions builds/packages all six board/USB variants. Hardware validation remains pending.
 
 [中文文档 (Chinese)](README_CN.md)
 

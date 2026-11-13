@@ -1,73 +1,88 @@
 <!doctype html><meta charset="utf-8"><title>Gyro UI integration test</title>
 <script type="module">
-// Browser integration test with an explicit fake USB device. Never connects to
-// hardware. Serve the repository root, then open /tests/web_ui_test.html.
-import { defaults, encodeConfig, decodeConfig } from '../web/protocol.mjs';
-let config = defaults(), ack = [0, 0, 0], saveFails = false, saves = 0;
+// Explicit fake HID device; no hardware is accessed. Serve the repository root.
+import { defaults, encodeConfig, decodeConfig, globalDefaults, encodeGlobal, decodeGlobal } from '../web/protocol.mjs';
+let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 0, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
 const commands = [];
 class FakeDevice extends EventTarget {
   opened = false; productName = 'SIMULATED DS5 GYRO'; productId = 0x0DF2;
-  collections = [{ featureReports: [{ reportId: 0xFC }, { reportId: 0xFD }] }];
+  collections = [{ featureReports: [0xFA, 0xFC, 0xFD, 0xFE].map(reportId => ({ reportId })) }];
   async open() { this.opened = true; }
   async close() { this.opened = false; }
   async sendFeatureReport(id, bytes) {
     check(id === 0xFC && bytes.length === 63, 'full-length SET_REPORT');
     commands.push(bytes.slice()); ack = [bytes[0], 0, bytes[1]];
-    if (bytes[0] === 1) config = decodeConfig(bytes.slice(2, 42));
+    if (bytes[0] === 1) profiles[edit] = decodeConfig(bytes.slice(2, 42));
     if (bytes[0] === 2) { if (saveFails) ack[1] = 2; else saves++; }
-    if (bytes[0] === 4) config = defaults();
+    if (bytes[0] === 4) profiles[edit] = defaults();
+    if (bytes[0] === 6) edit = bytes[2];
+    if (bytes[0] === 7) { if (settings.source) ack[1] = 1; else active = settings.manual = bytes[2]; }
+    if (bytes[0] === 8) { settings = decodeGlobal(bytes.slice(2, 59)); active = settings.source === 1 ? settings.edge[1] : settings.source === 2 ? settings.dongle[0] : settings.manual; }
   }
   async receiveFeatureReport(id) {
     const bytes = new Uint8Array(64); bytes[0] = id;
-    if (id === 0xFC) { bytes.set(encodeConfig(config), 1); bytes.set(ack, 41); }
-    if (id === 0xFD) { bytes[1] = 1; bytes[2] = 27; bytes[63] = 2; }
-    if (id === 0xF8) bytes.set(new TextEncoder().encode('UI TEST DEVICE'), 1);
+    if (id === 0xFC) { bytes.set(encodeConfig(profiles[edit]), 1); bytes.set(ack, 41); bytes[44] = 255; bytes[45] = edit; bytes[46] = active; bytes[47] = 2; }
+    if (id === 0xFA) { bytes.set([2, 4, edit, active], 1); const g = encodeGlobal(settings); bytes.set(g.slice(0, 9), 5); bytes.set(g.slice(9), 16); }
+    if (id === 0xFD) { bytes[1] = 2; bytes[2] = statusFlags; bytes[63] = 2; }
+    if (id === 0xFE) { bytes[1] = 2; bytes[2] = active; }
+    if (id === 0xF8) bytes.set(new TextEncoder().encode('UI TEST DEVICE G2'), 1);
     return new DataView(bytes.buffer);
   }
 }
-const fake = new FakeDevice(), hid = new EventTarget();
-hid.requestDevice = async () => [fake];
+const fake = new FakeDevice(), hid = new EventTarget(); hid.requestDevice = async () => [fake];
 Object.defineProperty(navigator, 'hid', { configurable: true, value: hid });
 const html = await (await fetch('../web/index.html')).text();
 document.open(); document.write(html.replace('href="style.css"', 'href="../web/style.css"').replace('<script type="module" src="app.js"></' + 'script>', '')); document.close();
-const $ = id => document.getElementById(id);
-const result = document.createElement('pre'); result.id = 'testResults'; document.body.prepend(result);
+const $ = id => document.getElementById(id), result = document.createElement('pre'); result.id = 'testResults'; document.body.prepend(result);
 let assertions = 0;
 function check(condition, label) { if (!condition) throw new Error(label); assertions++; }
 function change(id, value) { $(id).value = value; $(id).dispatchEvent(new Event('change')); }
-async function waitFor(predicate) {
-  const deadline = performance.now() + 4000;
-  while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); }
-}
+async function waitFor(predicate) { const deadline = performance.now() + 5000; while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); } }
+const ready = () => waitFor(() => !$('apply').disabled);
 try {
   await import('../web/app.js');
-  check($('apply').disabled, 'initial disconnected state');
-  check($('profiles').hidden, 'profile choices hidden without binding');
-  $('connect').click(); await waitFor(() => !$('apply').disabled);
-  check(fake.opened && $('device').textContent.includes('SIMULATED'), 'connect/read config');
+  check($('apply').disabled && $('connect').textContent === '连接接收器', 'initial state');
+  check(document.querySelector('h1').textContent === 'BL616 接收器配置', 'concise product title');
+  check($('editSlot').options.length === 4 && $('profiles').hidden, 'four independent slots');
+  $('connect').click(); await ready(); check(fake.opened, 'connect and read all slots');
   $('presetLong').click(); check($('hold').value === '300' && $('output').value === '1', 'long-L2 preset');
-  change('profileSource', '1');
-  check($('profiles').querySelectorAll('input').length === 4, 'four native Edge profiles');
-  $('profiles').querySelector('[data-profile="1"]').checked = true;
-  change('activation', '0'); $('apply').click();
-  await waitFor(() => !$('apply').disabled);
-  check(config.profileSource === 1 && config.profiles === 2 && config.activation === 0, 'native-profile settings reach wire');
-  $('save').click(); await waitFor(() => !$('apply').disabled);
-  check(saves === 1 && commands.at(-1)[0] === 2, 'explicit save command');
-  saveFails = true; $('save').click(); await waitFor(() => !$('apply').disabled);
-  check($('message').classList.contains('error') && $('message').textContent.includes('Flash'), 'flash failure shown');
-  change('profileSource', '2');
-  check($('profiles').querySelectorAll('input').length === 2, 'two dongle profiles');
-  $('profiles').querySelector('[data-profile="1"]').checked = true;
-  $('apply').click(); await waitFor(() => !$('apply').disabled);
-  check(config.profileSource === 2 && config.profiles === 2, 'dongle-profile settings reach wire');
-  $('defaults').click(); await waitFor(() => !$('apply').disabled);
-  check(config.output === 0 && $('output').value === '0', 'reset disables mapping');
-  await waitFor(() => $('factory').textContent === '已应用');
-  check($('raw').textContent.includes('Edge 原生档: 2'), 'telemetry rendered');
-  $('disconnect').click(); await waitFor(() => !fake.opened);
-  check($('apply').disabled, 'disconnect restores controls');
-  result.textContent = `PASS: ${assertions} assertions; fake WebHID device only`;
-  result.style.color = '#70e6bc';
-} catch (e) { result.textContent = `FAIL: ${e.stack}`; result.style.color = '#ff9c91'; }
+  change('editSlot', '1'); await ready(); check(edit === 1 && $('output').value === '0', 'editing inactive slot');
+  change('output', '1'); change('sx', '3'); $('apply').click(); await ready();
+  check(profiles[1].sx === 3 && profiles[0].output === 0 && active === 0, 'apply only edited profile');
+  $('activateSlot').click(); await ready(); check(active === 1 && $('manualSlot').value === '1', 'manual switch');
+  change('switchSource', '1'); $('apply').click(); await ready();
+  check(settings.source === 1 && !$('nativeBindings').hidden && $('activateSlot').disabled, 'native Fn mapping');
+  change('switchSource', '2'); change('dongle0', '1'); $('apply').click(); await ready();
+  check(settings.source === 2 && active === 1 && !$('dongleBindings').hidden, 'dongle profile mapping');
+  change('shortcut0-action', '4'); change('shortcut0-gesture', '1'); change('shortcut0-hold', '300');
+  const masks = $('shortcuts').querySelector('fieldset'); masks.querySelector('[data-bit="11"]').checked = true; masks.querySelector('[data-bit="12"]').checked = true;
+  $('save').click(); await ready();
+  check(saves === 1 && commands.at(-1)[0] === 2, 'save after all writes');
+  check(profiles[0].hold === 300 && profiles[0].output === 1 && profiles[1].sx === 3 && edit === 1, 'draft preserved across slots');
+  check(settings.actions[0].action === 4 && settings.actions[0].buttons === ((1 << 11) | (1 << 12)), 'hotkey settings reach wire');
+  saveFails = true; change('sx', '4'); $('save').click(); await ready();
+  check($('message').classList.contains('error') && $('message').textContent.includes('保存失败'), 'save failure reported');
+  saveFails = false; $('defaults').click(); await ready();
+  check(profiles[1].output === 0 && profiles[0].output === 1, 'reset affects edited slot only');
+  const imported = { version: 2, profiles: Array.from({ length: 4 }, () => ({ ...defaults(), sx: 5 })), settings: globalDefaults() };
+  Object.defineProperty($('import'), 'files', { configurable: true, value: [new File([JSON.stringify(imported)], 'test.json', { type: 'application/json' })] });
+  $('import').dispatchEvent(new Event('change')); await ready();
+  check($('sx').value === '5' && profiles[1].sx !== 5, 'import stays in form');
+  active = 3;
+  await waitFor(() => $('currentSlot').textContent === '当前配置：4');
+  check($('manualSlot').value === '0', 'telemetry preserves imported manual slot');
+  $('save').click(); await ready(); check(profiles.every(c => c.sx === 5), 'imported bank saved');
+  check(active === 0, 'imported default manual slot applied');
+  location.hash = '#tester'; await waitFor(() => !$('tester').hidden);
+  check($('config').hidden && $('update').hidden, 'tab routing');
+  await waitFor(() => $('factory').textContent === '已应用' && $('diagnostics').textContent.includes('接收报告'));
+  check($('raw').textContent.includes('Edge 档位: 2'), 'telemetry rendered');
+  statusFlags = 33; await waitFor(() => $('calibration').textContent === '校准超时');
+  check($('calibration').textContent === '校准超时', 'calibration timeout rendered');
+  $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');
+  hid.requestDevice = async () => ({ length: 1, 0: { ...fake, collections: [{ featureReports: [{ reportId: 0xFC }] }] } });
+  $('connect').click(); await waitFor(() => !$('connect').disabled);
+  check($('message').classList.contains('error') && !fake.opened, 'unsupported firmware rejected');
+  result.textContent = `PASS: ${assertions} assertions; fake WebHID device only`; result.style.color = '#258354';
+} catch (e) { result.textContent = `FAIL: ${e.stack}`; result.style.color = '#b42318'; }
 </script>

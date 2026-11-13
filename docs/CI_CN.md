@@ -2,11 +2,13 @@
 
 Git 负责保存源码，GitHub Actions 在云端编译。本项目配置位于 [firmware.yml](../.github/workflows/firmware.yml)，不需要把本地 SDK、工具链或固件二进制提交进仓库，也无需额外设置 Secret。
 
-2026-11-14（北京时间），[运行 43458084369](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/actions/runs/43458084369) 已实际通过主机检查与全部六个版本的编译、打包，生成六个固件 Artifact 和六个调试 Artifact。默认 LCTech FS 包已下载核对官方 Artifact SHA256、包内校验和、构建来源及刷机文件。真实硬件尚未验收；后续功能建议见 [优化清单](ROADMAP_CN.md)。
+G1历史验证：2026-11-14（北京时间），[运行 43458084369](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/actions/runs/43458084369) 已实际通过主机检查与全部六个版本的编译、打包，生成六个固件 Artifact 和六个调试 Artifact。默认 LCTech FS 包已下载核对官方 Artifact SHA256、包内校验和、构建来源及刷机文件。G2增加的四档/快捷动作等以当前提交对应的Actions结果为准，请从分支与提交号确认下载版本。真实硬件尚未验收；按 [真机清单](HARDWARE_TEST_CN.md) 记录，功能状态见 [优化清单](ROADMAP_CN.md)。
 
 ## 触发与下载
 
 推送任意分支或标签、提交 Pull Request，都会启动 `Firmware` 工作流。工作流合并到默认分支后，也可在 GitHub **Actions → Firmware → Run workflow** 中选择分支并手动运行。仓库若禁用了 Actions，需要先在仓库设置中启用。
+
+主机检查执行C引擎/运行时回归、三个板型LED逻辑、ASan/UBSan、实际HID描述符、JS协议与打包测试。模拟WebHID表单测试可在浏览器打开 `tests/web_ui_test.html`，当前不由Actions自动执行。
 
 主机检查通过后，并行构建六个版本：
 
@@ -24,7 +26,7 @@ Git 负责保存源码，GitHub Actions 在云端编译。本项目配置位于 
 - `boot2_*.bin`、`partition.bin`、`partition_cfg_4M_nosec.toml`、`flash_prog_cfg.ini`：刷机文件与配置。
 - `build-info.json`：源码提交、SDK 提交、编译器和工具链归档校验值。
 - `SHA256SUMS`：所有其他包内文件的 SHA256 校验。
-- `web/`、`GYRO_CN.md`、`刷机说明.txt`：体感设置工具和使用说明。
+- `web/`、各份 Markdown 指南、`刷机说明.txt`：体感设置工具、协议、功能清单和真机验收说明。
 - 项目、Opus 和 SDK 的许可证说明。
 
 CI 的成功表示测试、编译和打包通过；实际蓝牙连接、音频并发、FS/HS 枚举和 Edge 背键／切档行为仍需真机验收。体感默认关闭。自动编译不等于网页 OTA，当前固件仍通过串口刷写。

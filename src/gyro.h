@@ -3,11 +3,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define GYRO_CONFIG_VERSION 1
+#define GYRO_CONFIG_VERSION 2
 #define GYRO_CONFIG_SIZE 40
 #define GYRO_REPORT_SIZE 63
 #define GYRO_REPORT_CONFIG 0xFC
 #define GYRO_REPORT_STATUS 0xFD
+#define GYRO_REPORT_PROFILES 0xFA
+#define GYRO_REPORT_DIAGNOSTICS 0xFE
 
 enum { GYRO_OFF, GYRO_MOUSE, GYRO_RIGHT_STICK };
 enum { GYRO_ALWAYS, GYRO_HOLD, GYRO_TOGGLE, GYRO_HOLD_OFF };
@@ -28,6 +30,8 @@ struct gyro_config {
     uint8_t stick_blend; /* 0 additive, 1 replace while active */
     uint8_t profile_source; /* 0 any, 1 Edge native, 2 dongle remap */
     uint8_t profile_mask;   /* native: triangle/square/cross/circle; dongle: 0/1 */
+    uint8_t release_threshold;
+    uint16_t ads_multiplier; /* L2 sensitivity /100, independent of gate */
 };
 
 /* Pure C engine; one owner (usb_task). Units on wire: sensitivity, mouse_cpd,
@@ -36,6 +40,7 @@ struct gyro_config {
 void gyro_init(void);
 void gyro_defaults(uint8_t out[GYRO_CONFIG_SIZE]);
 bool gyro_set_config(const uint8_t *data, uint16_t len);
+bool gyro_validate_config(const uint8_t *data, uint16_t len);
 void gyro_get_config(uint8_t out[GYRO_CONFIG_SIZE]);
 void gyro_reset_stream(bool forget_calibration);
 bool gyro_set_factory_calibration(const uint8_t *data, uint16_t len);
@@ -48,3 +53,6 @@ void gyro_get_status(uint8_t out[GYRO_REPORT_SIZE]);
 void gyro_mouse_peek(int8_t *dx, int8_t *dy);
 void gyro_mouse_consume(int8_t dx, int8_t dy);
 void gyro_set_dongle_profile(uint8_t profile);
+uint32_t gyro_buttons(const uint8_t *payload, bool edge);
+void gyro_suppress_buttons(uint8_t *payload, uint32_t mask);
+void gyro_set_modifiers(bool paused, uint16_t fine_multiplier);

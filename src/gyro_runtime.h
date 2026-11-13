@@ -12,3 +12,7 @@ void gyro_runtime_process(const uint8_t *raw, uint8_t *output,
 void gyro_runtime_command(const uint8_t *data, uint16_t len);
 void gyro_runtime_get_config(uint8_t out[GYRO_REPORT_SIZE]);
 void gyro_runtime_get_status(uint8_t out[GYRO_REPORT_SIZE]);
+void gyro_runtime_get_profiles(uint8_t out[GYRO_REPORT_SIZE]);
+void gyro_runtime_get_diagnostics(uint8_t out[GYRO_REPORT_SIZE]);
+uint8_t gyro_runtime_take_feedback(void);
+uint32_t gyro_runtime_shortcut_mask(const uint8_t *raw, bool edge);

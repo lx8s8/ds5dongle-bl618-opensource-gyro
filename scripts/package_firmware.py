@@ -93,8 +93,8 @@ def build_package(root, board, usb, sdk_root, output):
             shutil.copyfile(require_file(source), package / name)
         if (root / "web").is_dir():
             shutil.copytree(root / "web", package / "web")
-        if (root / "docs/GYRO_CN.md").is_file():
-            shutil.copyfile(root / "docs/GYRO_CN.md", package / "GYRO_CN.md")
+        for guide in (root / "docs").glob("*.md"):
+            shutil.copyfile(guide, package / guide.name)
         (package / "flash_prog_cfg.ini").write_text(
             "[cfg]\nerase = 1\nskip_mode = 0x0, 0x0\nboot2_isp_mode = 0\n\n"
             f"[boot2]\nfiledir = ./{boot.name}\naddress = 0x000000\n\n"

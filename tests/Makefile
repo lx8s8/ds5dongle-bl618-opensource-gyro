@@ -1,10 +1,13 @@
 CC ?= cc
 CFLAGS ?= -O1 -g -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter
-SOURCES = gyro_test.c ../src/gyro.c ../src/gyro_runtime.c ../src/ds5_protocol.c ../src/remap.c
+SOURCES = gyro_test.c ../src/gyro.c ../src/gyro_runtime.c ../src/diagnostics.c ../src/dongle_control.c ../src/ds5_protocol.c ../src/remap.c
 BIN = /tmp/ds5-gyro-tests
 
 .PHONY: check sanitize
 check:
+	@for board in "" "-DBOARD_LCTECH_616=1" "-DBOARD_M0S_DOCK=1"; do \
+	  $(CC) $(CFLAGS) -DLOG_LEVEL=0 $$board -Istubs -I../src led_test.c ../src/led_status.c -o /tmp/ds5-led-tests && /tmp/ds5-led-tests || exit 1; \
+	done
 	$(CC) $(CFLAGS) -DLOG_LEVEL=0 -Istubs -I../src $(SOURCES) -lm -o $(BIN)
 	$(BIN)
 	python3 check_descriptors.py

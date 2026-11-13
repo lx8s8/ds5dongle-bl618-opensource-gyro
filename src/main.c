@@ -1091,6 +1091,8 @@ static void usb_task(void *arg)
         }
         usb_gamepad_process_deferred();
         gyro_runtime_poll(ds5_connected, (uint32_t)bflb_mtimer_get_time_us());
+        uint8_t gyro_notice = gyro_runtime_take_feedback();
+        if (gyro_notice && ds5_connected) led_status_notify(gyro_notice);
 
         if (primer_resend_us && ds5_connected &&
             stealth_primer_countdown == 0 &&
@@ -1115,6 +1117,8 @@ static void usb_task(void *arg)
             if (!ds5_connected) continue;
             uint8_t gyro_source[DS5_USB_INPUT_PAYLOAD_LEN];
             memcpy(gyro_source, raw_report + DS5_BT_PAYLOAD_OFFSET, sizeof(gyro_source));
+            gyro_suppress_buttons(raw_report + DS5_BT_PAYLOAD_OFFSET,
+                                  gyro_runtime_shortcut_mask(gyro_source, bt_hid_host_is_dse()));
             last_input_us = bflb_mtimer_get_time_us();
             usb_fwd_count++;
             if (usb_fwd_count == 1)

@@ -21,5 +21,5 @@ for suffix in ('ds', 'dse'):
         elif tag == 0x94: count = value
         elif tag == 0xB0: reports[report] = reports.get(report, 0) + size * count
         offset += length + 1
-    assert reports[0xFC] == reports[0xFD] == 63 * 8
+    assert reports[0xFA] == reports[0xFE] == reports[0xFC] == reports[0xFD] == 63 * 8
     print(f'{suffix}: {len(data)} descriptor bytes, gyro feature reports 63 bytes each')

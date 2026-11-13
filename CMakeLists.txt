@@ -28,6 +28,8 @@ target_sources(app PRIVATE
     src/remap.c
     src/gyro.c
     src/gyro_runtime.c
+    src/diagnostics.c
+    src/dongle_control.c
 )
 
 sdk_add_include_directories(src)

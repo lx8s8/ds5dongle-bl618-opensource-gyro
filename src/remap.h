@@ -86,4 +86,5 @@ const remap_entry_t *remap_get_table(void);
 const remap_entry_t *remap_get_profile_table(uint8_t profile);
 uint8_t remap_get_active_profile(void);
 void remap_switch_profile(uint8_t profile);
+void remap_poll(uint32_t now_us);
 void remap_tp_cycle_mode(void);

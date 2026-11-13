@@ -2,6 +2,7 @@
 #define LED_STATUS_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 enum led_pattern {
     LED_OFF,
@@ -22,6 +23,7 @@ void led_status_set(enum led_pattern pattern);
 enum led_pattern led_status_get(void);
 bool led_status_can_auto_off(void);
 void led_status_tick(void);
+void led_status_notify(uint8_t flashes);
 void led_status_lock(void);
 void led_status_unlock(void);
 

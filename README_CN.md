@@ -1,10 +1,10 @@
 # DS5Dongle BL618
 
-## 本分支新增：固件陀螺仪映射 G1
+## 本分支新增：固件陀螺仪映射 G2
 
-新增鼠标/右摇杆体感输出、按住/长按/单击切换、自定义按键与 Edge 背键、静止校准和中文 WebHID 调试页。支持仅在指定 **Edge 原生 Fn 配置档**或**接收器两套映射档**启用体感；应用后关闭网页仍运行。默认关闭映射。
+新增四套独立体感配置、鼠标/右摇杆输出、自定义按键与Edge背键、静止校准和中文WebHID页面。Edge原生Fn四档和接收器两套remap档可分别绑定体感配置或关闭；普通DualSense也能用快捷键切四档、暂停、校准和按住精瞄。支持L2滞回/ADS倍率、板载灯提示和接收器性能统计。默认四档关闭，应用后关闭网页仍运行。
 
-运行 `python3 -m http.server 8765 --bind 127.0.0.1 --directory web` 后，用桌面 Chrome / Edge 打开 `http://127.0.0.1:8765/`。详细设置、参考方案对比、协议和验证范围见 [陀螺仪说明](docs/GYRO_CN.md)，后续建议见 [功能新增与优化清单](docs/ROADMAP_CN.md)。主机测试与 GitHub Actions 六个版本的固件编译、打包已通过，真实手柄和开发板联调尚未完成。主机测试运行 `make -C tests check`。
+运行 `python3 -m http.server 8765 --bind 127.0.0.1 --directory web`，桌面Chrome / Edge打开 `http://127.0.0.1:8765/`。设置见 [体感使用说明](docs/GYRO_CN.md)，功能状态见 [新增与优化清单](docs/ROADMAP_CN.md)，下一次调试使用 [真机验收清单](docs/HARDWARE_TEST_CN.md)。`make -C tests check` 运行主机检查；GitHub Actions自动测试、编译和打包六种固件，真实手柄和开发板联调待验。
 
 基于 BL616/BL618 的 DualSense 无线手柄适配器。将 DualSense / DualSense Edge 手柄通过蓝牙经典（BR/EDR）HID 连接到 BL616/BL618，再通过 USB HID 透传给主机，主机端呈现为标准有线 DualSense（VID 054C / PID 0CE6）或 DualSense Edge（PID 0DF2）。Steam、SDL、PS Remote Play 等均可直接识别。
 

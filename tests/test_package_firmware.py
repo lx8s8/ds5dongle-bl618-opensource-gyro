@@ -31,6 +31,8 @@ class FirmwarePackageTests(unittest.TestCase):
             pack.PARTITION_TABLE: b"[pt_table]\n",
             "LICENSE": b"GPL",
             "NOTICE": b"Notices",
+            "docs/GYRO_CN.md": b"Gyro guide",
+            "docs/HARDWARE_TEST_CN.md": b"Hardware checklist",
             "lib/opus/LICENSE_PLEASE_READ.txt": b"Opus license",
             "sdk/LICENSE": b"Apache",
             ".github/ci/dependencies.env": (PROJECT / ".github/ci/dependencies.env").read_bytes(),
@@ -58,6 +60,8 @@ class FirmwarePackageTests(unittest.TestCase):
             contents = {name[len(prefix):]: archive.read(name) for name in archive.namelist()}
         self.assertEqual(contents["ds5dongle-lctech616.bin"], b"fresh firmware")
         self.assertNotIn("ds5dongle-lctech616-hs.bin", contents)
+        self.assertEqual(contents["GYRO_CN.md"], b"Gyro guide")
+        self.assertEqual(contents["HARDWARE_TEST_CN.md"], b"Hardware checklist")
         self.assertIn(b"filedir = ./boot2_test.bin", contents["flash_prog_cfg.ini"])
         self.assertNotIn(b"*", contents["flash_prog_cfg.ini"])
         info = json.loads(contents["build-info.json"])

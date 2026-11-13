@@ -9,6 +9,8 @@
 #include "state_mgr.h"
 #include "remap.h"
 #include "gyro_runtime.h"
+#include "dongle_control.h"
+#include "diagnostics.h"
 #include "usbd_core.h"
 #include "usbd_hid.h"
 #include "bl616_glb.h"
@@ -24,14 +26,14 @@
 
 #if defined(BOARD_LCTECH_616)
   #ifdef FORCE_FS_MODE
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G1"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2"
   #else
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G1H"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2H"
   #endif
 #elif defined(BOARD_M0S_DOCK)
-#define FIRMWARE_VERSION "M0S-DS5 3.5G1"
+#define FIRMWARE_VERSION "M0S-DS5 3.5G2"
 #else
-#define FIRMWARE_VERSION "BL618-DS5 3.5G1"
+#define FIRMWARE_VERSION "BL618-DS5 3.5G2"
 #endif
 
 #define USBD_MAX_POWER      250
@@ -42,21 +44,16 @@
 #define USB_HID_ONLY_SIZE (9 + 9 + 7 + USB_KBD_DESC_SIZE)
 #define USB_AUDIO_DESC_SIZE 186
 #define USB_HID_CONFIG_SIZE (9 + USB_AUDIO_DESC_SIZE + USB_HID_ONLY_SIZE)
-#define HID_REPORT_DESC_SIZE_DS  345
-#define HID_REPORT_DESC_SIZE_DSE 461
+#define HID_REPORT_DESC_SIZE_DS  361
+#define HID_REPORT_DESC_SIZE_DSE 477
 #define KBD_REPORT_DESC_SIZE 138  /* Keyboard + Consumer + Mouse */
 
 static bool current_dse_mode = false;
 
-static volatile bool usb_config_save_pending = false;
-static volatile bool usb_reset_pending = false;
-static volatile bool usb_remap_save_pending  = false;
-static volatile uint8_t usb_remap_save_profile = 0;
-static uint8_t remap_read_profile = 0;
 static bool first_usb_send_logged = false;
 
-#define SET_REPORT_MAX_DATA    64
-#define SET_REPORT_QUEUE_DEPTH 4
+#define SET_REPORT_MAX_DATA    128
+#define SET_REPORT_QUEUE_DEPTH 8
 
 typedef struct {
     uint8_t  report_id;
@@ -241,6 +238,8 @@ static const uint8_t hid_report_desc_ds[HID_REPORT_DESC_SIZE_DS] = {
     0x95, 0x7F,       /*   Report Count (127) — 31 entries * 4 + header */
     0xB1, 0x02,
 
+    0x85, 0xFA, 0x09, 0x3B, 0x95, 0x3F, 0xB1, 0x02, /* profiles/actions */
+    0x85, 0xFE, 0x09, 0x3F, 0x95, 0x3F, 0xB1, 0x02, /* diagnostics */
     0x85, 0xFC, 0x09, 0x3D, 0x95, 0x3F, 0xB1, 0x02, /* gyro config */
     0x85, 0xFD, 0x09, 0x3E, 0x95, 0x3F, 0xB1, 0x02, /* gyro telemetry */
 
@@ -317,6 +316,8 @@ static const uint8_t hid_report_desc_dse[HID_REPORT_DESC_SIZE_DSE] = {
     0x85, 0xF8, 0x09, 0x39, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xF9, 0x09, 0x3A, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xFB, 0x09, 0x3C, 0x95, 0x7F, 0xB1, 0x02,  /* button remap table (127B) */
+    0x85, 0xFA, 0x09, 0x3B, 0x95, 0x3F, 0xB1, 0x02, /* profiles/actions */
+    0x85, 0xFE, 0x09, 0x3F, 0x95, 0x3F, 0xB1, 0x02, /* diagnostics */
     0x85, 0xFC, 0x09, 0x3D, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xFD, 0x09, 0x3E, 0x95, 0x3F, 0xB1, 0x02,
     0xC0,
@@ -754,24 +755,6 @@ void usb_gamepad_set_dse_mode(bool dse)
 ATTR_TCM_SECTION
 void usb_gamepad_process_deferred(void)
 {
-    if (usb_reset_pending) {
-        usb_reset_pending = false;
-        config_save();
-        LOG_INF("[USB] CMD 0x03: USB reconnect via reset\n");
-        vTaskDelay(pdMS_TO_TICKS(100));
-        GLB_SW_System_Reset();
-    }
-    if (usb_config_save_pending) {
-        usb_config_save_pending = false;
-        config_save();
-        LOG_INF("[USB] CMD 0x02: config saved\n");
-    }
-    if (usb_remap_save_pending) {
-        usb_remap_save_pending = false;
-        remap_save_profile(usb_remap_save_profile);
-        LOG_INF("[USB] Remap profile %d saved to flash\n", usb_remap_save_profile);
-    }
-
     uint8_t frid = pending_feature_rid;
     if (frid != 0) {
         pending_feature_rid = 0;
@@ -786,15 +769,30 @@ void usb_gamepad_process_deferred(void)
             gyro_runtime_command(entry.data, entry.len);
             continue;
         }
+        if (entry.report_id == 0xF6 || entry.report_id == 0xFB) {
+            uint8_t effects = dongle_control_command(entry.report_id, entry.data, entry.len);
+            if (effects & DONGLE_CONFIG_CHANGED) {
+                usb_gamepad_set_polling_rate(config_get()->polling_rate_mode);
+                if (config_get()->lock_volume) state_mgr_restore_config_volume();
+            }
+            if (effects & DONGLE_RESET) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                GLB_SW_System_Reset();
+            }
+            continue;
+        }
         LOG_INF("[USB] Deferred SET_REPORT(0x%02x) → BT, %u bytes%s\n",
                entry.report_id, entry.len, entry.is_dse ? " (DSE)" : "");
         bt_hid_host_set_feature_crc(entry.report_id, entry.data, entry.len);
     }
+    remap_poll((uint32_t)bflb_mtimer_get_time_us());
+    dongle_control_publish();
 }
 
 int usb_gamepad_init(usb_gamepad_output_cb_t output_cb)
 {
     output_callback = output_cb;
+    dongle_control_init();
     memset(usb_in_buf, 0, sizeof(usb_in_buf));
     memset(kbd_buf, 0, sizeof(kbd_buf));
 
@@ -1052,7 +1050,8 @@ static uint8_t kbd_idle_report[USB_KBD_EP_MPS];
 static bool is_dongle_cmd(uint8_t report_id)
 {
     return (report_id >= 0xF6 && report_id <= 0xF9) || report_id == 0xFB ||
-           report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS;
+           report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS ||
+           report_id == GYRO_REPORT_PROFILES || report_id == GYRO_REPORT_DIAGNOSTICS;
 }
 
 /*
@@ -1157,22 +1156,20 @@ void usbd_hid_get_report(uint8_t busid, uint8_t intf, uint8_t report_id,
     if (is_dongle_cmd(report_id)) {
         feature_resp_buf[0] = report_id;
 
-        if (report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS) {
+        if (report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS ||
+            report_id == GYRO_REPORT_PROFILES || report_id == GYRO_REPORT_DIAGNOSTICS) {
             if (report_id == GYRO_REPORT_CONFIG)
                 gyro_runtime_get_config(feature_resp_buf + 1);
-            else
+            else if (report_id == GYRO_REPORT_STATUS)
                 gyro_runtime_get_status(feature_resp_buf + 1);
+            else if (report_id == GYRO_REPORT_PROFILES)
+                gyro_runtime_get_profiles(feature_resp_buf + 1);
+            else gyro_runtime_get_diagnostics(feature_resp_buf + 1);
             *data = feature_resp_buf;
             *len = 1 + GYRO_REPORT_SIZE;
         } else if (report_id == 0xF7) {
-            struct config_body *cfg = config_get();
-            uint16_t cfg_len = sizeof(struct config_body);
-            if (cfg_len > FEATURE_DATA_MAX)
-                cfg_len = FEATURE_DATA_MAX;
-            memcpy(feature_resp_buf + 1, cfg, cfg_len);
             *data = feature_resp_buf;
-            *len  = 1 + cfg_len;
-            LOG_INF("[USB] GET_REPORT(0xF7) → config %u bytes\n", cfg_len);
+            *len = 1 + dongle_control_get(0xF7, feature_resp_buf + 1);
         } else if (report_id == 0xF8) {
             uint16_t ver_len = strlen(FIRMWARE_VERSION);
             if (ver_len > FEATURE_DATA_MAX)
@@ -1208,16 +1205,8 @@ void usbd_hid_get_report(uint8_t busid, uint8_t intf, uint8_t report_id,
             *data = feature_resp_buf;
             *len  = 14;
         } else if (report_id == 0xFB) {
-            feature_resp_buf[0] = 0xFB;
-            feature_resp_buf[1] = remap_get_active_profile();
-            feature_resp_buf[2] = remap_read_profile;
-            memcpy(feature_resp_buf + 3,
-                   remap_get_profile_table(remap_read_profile),
-                   REMAP_BTN_COUNT * sizeof(remap_entry_t));
             *data = feature_resp_buf;
-            *len  = 3 + REMAP_BTN_COUNT * (int)sizeof(remap_entry_t);
-            LOG_INF("[USB] GET_REPORT(0xFB) → profile %d (%d bytes)\n",
-                    remap_read_profile, *len);
+            *len = 1 + dongle_control_get(0xFB, feature_resp_buf + 1);
         } else {
             *len = 0;
         }
@@ -1273,77 +1262,20 @@ void usbd_hid_set_report(uint8_t busid, uint8_t intf, uint8_t report_id,
         payload_len--;
     }
 
-    /* Queue gyro commands from ISR; validation, math and flash run in usb_task.
-     * A full queue leaves the request unacknowledged; the page reports timeout. */
-    if (report_type == 0x03 && report_id == GYRO_REPORT_CONFIG) {
-        if (payload_len == GYRO_REPORT_SIZE && set_report_queue) {
-            set_report_entry_t entry = { .report_id = GYRO_REPORT_CONFIG,
-                                         .len = GYRO_REPORT_SIZE };
-            memcpy(entry.data, payload, GYRO_REPORT_SIZE);
-            xQueueSendFromISR(set_report_queue, &entry, NULL);
+    /* All dongle mutations execute in usb_task. GET returns published snapshots. */
+    if (report_type == 0x03 && (report_id == GYRO_REPORT_CONFIG || report_id == 0xF6 || report_id == 0xFB)) {
+        bool valid = report_id == GYRO_REPORT_CONFIG ? payload_len == GYRO_REPORT_SIZE :
+                     payload_len > 0 && payload_len <= (report_id == 0xFB ? 127u : 63u);
+        BaseType_t ok = pdFALSE;
+        if (valid && set_report_queue) {
+            set_report_entry_t entry = { .report_id = report_id, .len = (uint16_t)payload_len };
+            memcpy(entry.data, payload, payload_len);
+            ok = xQueueSendFromISR(set_report_queue, &entry, NULL);
         }
+        diagnostics_queue(ok == pdTRUE, set_report_queue ? (uint8_t)uxQueueMessagesWaitingFromISR(set_report_queue) : 0);
         return;
     }
-    if (report_type == 0x03 && report_id == GYRO_REPORT_STATUS) return;
-
-    /* Dongle config command (0xF6 SET) */
-    if (report_type == 0x03 && report_id == 0xF6 && payload_len > 0) {
-        uint8_t cmd = payload[0];
-        if (cmd == 0x01 && payload_len > 1) {
-            config_set(payload + 1, payload_len - 1);
-            usb_gamepad_set_polling_rate(config_get()->polling_rate_mode);
-            if (config_get()->lock_volume)
-                state_mgr_restore_config_volume();
-            LOG_INF("[USB] CMD 0x01: config updated\n");
-        } else if (cmd == 0x02) {
-            usb_config_save_pending = true;
-        } else if (cmd == 0x03) {
-            usb_reset_pending = true;
-        }
-        return;
-    }
-
-    /* Button remap command (0xFB SET) */
-    if (report_type == 0x03 && report_id == 0xFB && payload_len > 0) {
-        uint8_t cmd = payload[0];
-        if (cmd == 0x01) {
-            /* 0x01 [profile] [data...] — set remap for profile */
-            if (payload_len >= 2 + REMAP_OLD_BTN_COUNT * (int)sizeof(remap_entry_t)) {
-                uint8_t prof = payload[1];
-                if (prof >= REMAP_PROFILE_COUNT) prof = 0;
-                remap_set_profile(prof, payload + 2, (uint8_t)(payload_len - 2));
-                usb_remap_save_profile = prof;
-                usb_remap_save_pending = true;
-                LOG_INF("[USB] CMD 0xFB/0x01: profile %d updated (%d bytes)\n", prof, payload_len - 2);
-            } else if (payload_len >= 1 + REMAP_OLD_BTN_COUNT * (int)sizeof(remap_entry_t)) {
-                /* backward compat: no profile byte → profile 0 */
-                remap_set_profile(0, payload + 1, (uint8_t)(payload_len - 1));
-                usb_remap_save_profile = 0;
-                usb_remap_save_pending = true;
-                LOG_INF("[USB] CMD 0xFB/0x01: profile 0 updated (compat)\n");
-            }
-        } else if (cmd == 0x02) {
-            /* 0x02 [profile] — reset profile (optional byte) */
-            uint8_t prof = (payload_len >= 2) ? payload[1] : remap_get_active_profile();
-            if (prof >= REMAP_PROFILE_COUNT) prof = 0;
-            remap_reset_profile(prof);
-            usb_remap_save_profile = prof;
-            usb_remap_save_pending = true;
-            LOG_INF("[USB] CMD 0xFB/0x02: profile %d reset\n", prof);
-        } else if (cmd == 0x03 && payload_len >= 2) {
-            /* 0x03 [profile] — select profile to read on next GET_REPORT */
-            remap_read_profile = payload[1] < REMAP_PROFILE_COUNT ? payload[1] : 0;
-            LOG_INF("[USB] CMD 0xFB/0x03: read_profile → %d\n", remap_read_profile);
-        } else if (cmd == 0x05 && payload_len >= 2) {
-            /* 0x05 [profile] — switch active profile */
-            uint8_t prof = payload[1];
-            if (prof < REMAP_PROFILE_COUNT) {
-                remap_switch_profile(prof);
-                LOG_INF("[USB] CMD 0xFB/0x05: active profile → %d\n", prof);
-            }
-        }
-        return;
-    }
+    if (report_type == 0x03 && (report_id == GYRO_REPORT_STATUS || report_id == GYRO_REPORT_PROFILES || report_id == GYRO_REPORT_DIAGNOSTICS)) return;
 
     /* DSE profile writes (0x60-0x62) and unlock (0x80) — forward + notify */
     if (report_type == 0x03 && payload_len > 0 &&
@@ -1356,6 +1288,7 @@ void usbd_hid_set_report(uint8_t busid, uint8_t intf, uint8_t report_id,
                         ? payload_len : SET_REPORT_MAX_DATA;
         memcpy(entry.data, payload, entry.len);
         BaseType_t ok = xQueueSendFromISR(set_report_queue, &entry, NULL);
+        diagnostics_queue(ok == pdTRUE, (uint8_t)uxQueueMessagesWaitingFromISR(set_report_queue));
         LOG_ISR("[USB-ISR] SET_REPORT(DSE 0x%02x) queued=%d len=%lu\n",
                report_id, (int)(ok == pdTRUE), (unsigned long)payload_len);
         dse_on_profile_write(report_id);
