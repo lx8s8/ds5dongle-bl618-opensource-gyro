@@ -128,4 +128,23 @@
 
 用户指出其他软件不再识别为 PS5 手柄，明确要求在实现体感功能的同时保留系统 Sony 手柄识别。当前设备为 G2.3T，实际私下诊断身份 `1209:0001`，产品名为 `BL616 HID Test (Edge)`；该身份绕开本机 Apple PS5 HID 匹配，但部分第三方软件依赖 Sony VID/PID，不能用作日常兼容方案。
 
-正式代码的 VID 为 `054C`，普通 DualSense 使用 PID `0CE6`、Edge 使用 PID `0DF2`，相应产品名及原生输入／输出／Feature 保留。新增测试编译实际描述符、名称和 `usb_gamepad_set_dse_mode()`，在 FS/HS 下核对两种 Sony 身份及 HID 长度；增加 tag 发布时拒绝私下诊断包的打包检查，并在网页明确标记仍使用测试身份的设备。正式身份构建及恢复刷写待执行；Mac 正式身份下的鼠标输出仍需单独解决。
+正式代码的 VID 为 `054C`，普通 DualSense 使用 PID `0CE6`、Edge 使用 PID `0DF2`，相应产品名及原生输入／输出／Feature 保留。新增测试编译实际描述符、名称和 `usb_gamepad_set_dse_mode()`，在 FS/HS 下核对两种 Sony 身份及 HID 长度；增加 tag 发布时拒绝私下诊断包的打包检查，并在网页明确标记仍使用测试身份的设备。
+
+### G2.3 正式 Sony 身份恢复结果
+
+- 源码 `173c87e2b9c80419a04930ee8f20a9e65f7c8a9b`，LCTech FS，`USB_DIAGNOSTIC=0`；构建来源干净、包内 SHA256 全部通过，元数据 `usb_identity=standard`。Actions `43585656374` 的主机检查、六种固件与三个桌面包通过；网页模拟回归为 111 项。
+- 主程序 782960 字节，SHA256 `078c06fb0f177db53dc1b24935ad30a84c859c0c78f6de364f231c951f68b560`，包含前述径向体感修正与 USB 输入临界区修复。正式程序包含 Sony 产品字符串，不包含 `BL616 HID Test` 字符串。
+- BOOT 下载串口识别为 `349b:6160`。刷前读取发现程序不是预期 G2.3T，校验中止了写入；程序实际为 `LCT616-DS5 3.24H`，其 837248 字节程序与最初的上游原版备份一致。用户确认已自行刷回上游玩游戏，并要求不再备份；已有读取完成后未重复备份。
+- 从 `0x10000` 只写入主程序，设备端 SHA 校验及整片回读通过。`[0x10000, 0xD0000)` 以外逐字节不变，包括 Boot2、分区、配对及设置；程序末尾所在扇区补白为 `0xFF`。完整回读及校验记录继续仅存本机下载目录。
+- 用户退出 BOOT 并正常重插、重新连接 Edge 后，实际读取版本 `LCT616-DS5 3.18G2.3`；USB 为 `054C:0DF2`，厂商 `Sony Interactive Entertainment`，产品 `DualSense Edge Wireless Controller`，没有枚举到 `1209:0001`。四个体感 Feature 报告仍均为 64 字节含 ID。
+- 关闭独立 HID 读取后，macOS 的 `AppleGCHIDUserEventDriver` 接管手柄接口；直接使用系统 GameController 框架查询，产品名为 `DualSense Edge Wireless Controller`、类别 `DualSense`、输入类 `GCDualSenseGamepad`，`dualSenseProfile=true`、`hasMotion=true`。据此确认本机系统层的 PS5 手柄识别恢复，不代替所有第三方软件和游戏逐一验收。
+- 当前 Edge 原生档为 4，对应体感配置 4，输出关闭；编辑档为配置 1，Yaw、水平不反转、倍率 X4/Y2。手动零偏在重启后清除、工厂标定有效。未执行之前计划的 Roll＋反转对照，也未据此判定右杆手感问题已解决。
+
+Mac 正式身份下的复合键鼠接口也由 PS5 驱动接管，实际鼠标兼容问题仍待解决；不能再次以更换 Sony 身份作为日常方案。普通 DualSense、其他板型、HS、Windows/Linux 与音频／触觉并发仍按前述未验收范围处理。
+
+### 配置 1 取轴对照与剩余手感问题
+
+- 正式固件保持 `173c87e2`，本轮未重刷。首次 RAM 中的 Roll／反转试验因 USB 断开丢失；回读确认仍为 Yaw、未反转。第二次只把配置 1 改为 Roll、水平反转并保存，再从网页读取确认 X/Y 倍率均为 2，Fn+△ 生效为配置 1。
+- 用户反馈上下左右、方向与幅度基本正常，随后报告连续反向时跟随慢、转到约 ±90° 停住后回中；不记为右杆游戏手感验收通过。
+- 新诊断含实际 USB 15005 条、绘制 3522 条与 Feature 600 条。L2 连续约 19.947 秒，右杆 X 覆盖 0–254。离线 C 回放及局限见 [取轴分析](GYRO_AXIS_ANALYSIS_CN.md)，不把角速度模式的停手回中等同于异常，也不据此否定用户描述的运动跟随迟缓。
+- 本次工厂标定有效，手动零偏未启用。关闭独立 HID 客户端后再次用 macOS GameController 查询，仍为 `GCDualSenseGamepad`、DualSense 类别和有效 motion。完整 Flash、设备路径和原始输入记录继续只保存在本机。

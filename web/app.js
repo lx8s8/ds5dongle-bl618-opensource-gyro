@@ -120,8 +120,9 @@ async function command(cmd, value) {
   currentSlot(result[45]); const config=decodeConfig(result);
   reportedProfiles[result[44]]=config; return config;
 }
-async function readAll() {
-  const info = decodeProfiles(await receive(PROFILE_REPORT)); renderGlobal(info.settings); editSlot = info.edit;
+async function readAll(followActive = false) {
+  const info = decodeProfiles(await receive(PROFILE_REPORT)); renderGlobal(info.settings);
+  editSlot = followActive && info.active < 4 ? info.active : info.edit;
   for (let i = 0; i < 4; i++) drafts[i] = await command(6, [i]);
   await command(6, [editSlot]); $('editSlot').value = editSlot; render(drafts[editSlot]); currentSlot(info.active);
 }
@@ -133,7 +134,7 @@ $('connect').onclick = () => action(async () => {
   if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('请选择接收器，并更新至支持体感配置的固件');
   await candidate.open(); device = candidate; transport = new HidTransport(candidate);
   try {
-    reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(); await receiverUI.load(); device.addEventListener('inputreport', onInput);
+    reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(true); await receiverUI.load(); device.addEventListener('inputreport', onInput);
     $('device').textContent = candidate.productName; $('connectionDot').classList.add('on'); samples = []; usbStick = metrics = null; diagnosticAt = 0; capture.reset();
     $('identityWarning').hidden = candidate.vendorId !== 0x1209 || candidate.productId !== 0x0001;
     try { const version = await transport.read(0xF8, null); $('firmware').textContent = new TextDecoder().decode(version).replace(/\0.*$/s, ''); }
@@ -226,11 +227,15 @@ function route() {
 }
 function refreshProfiles(){
  if(!$('profileStrip'))return;
+ const inactive=!!device&&activeSlot<4&&editSlot!==activeSlot;
+ $('editNotice').hidden=!inactive;
+ $('editNotice').textContent=inactive?`正在编辑配置 ${editSlot+1}，当前生效为配置 ${activeSlot+1}；此处修改作用于编辑档。`:'';
  const chips=$('profileStrip').children;
  for(let i=0;i<4;i++){const chip=chips[i];if(!chip)continue;chip.classList.toggle('active',i===activeSlot);chip.classList.toggle('editing',i===editSlot);chip.disabled=busy;chip.querySelector('span').textContent=['关闭','鼠标','右摇杆'][i===editSlot?Number($('output').value):drafts[i].output];}
 }
 function refreshConfiguration(){
  refreshProfiles();if(!$('mappingCurve'))return;
+ $('axisHelp').textContent=Number($('horizontal').value)===0?'Yaw：手柄平放时像转盘一样左右平转；左右侧倾主要落在 Roll。':'Roll：像方向盘一样左右侧倾，两侧一高一低；方向相反时使用“水平反转”。';
  try{
   const c=formConfig(),canvas=$('mappingCurve'),ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,pad=48,max=Number($('curveMax').value),fn=c.output===2?stickPosition:mouseSpeed;
   const yMax=c.output===2?1:Math.max(1,fn(c,max,'x'),fn(c,max,'y'),fn(c,max,'x',true),fn(c,max,'y',true));
@@ -242,7 +247,7 @@ function refreshConfiguration(){
  }catch(e){$('curveOutput').textContent='请检查参数';}
 }
 receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
-tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);}});
+tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);},getStickConfig:()=>reportedProfiles[activeSlot]||defaults()});
 initReleases();
 for(let i=0;i<4;i++){const button=document.createElement('button');button.className='profile-chip';button.type='button';const title=document.createElement('strong');title.textContent='配置 '+(i+1);button.append(title,document.createElement('span'));button.onclick=()=>{ $('editSlot').value=i;$('editSlot').dispatchEvent(new Event('change'));};$('profileStrip').append(button);}
 $('settings').addEventListener('input',refreshConfiguration);$('settings').addEventListener('change',refreshConfiguration);$('curveSpeed').oninput=$('curveMax').onchange=refreshConfiguration;

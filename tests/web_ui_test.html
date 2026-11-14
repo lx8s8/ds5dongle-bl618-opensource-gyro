@@ -7,7 +7,7 @@ import { defaults, encodeConfig, decodeConfig, globalDefaults, encodeGlobal, dec
 import {receiverDefaults,encodeReceiver,decodeReceiver,remapDefaults,encodeRemap,decodeRemap} from '../web/receiver-protocol.mjs';
 await new Promise(resolve=>document.getElementById('runUITest').addEventListener('click',resolve,{once:true}));
 let receiver=receiverDefaults(),remap=[remapDefaults(),remapDefaults()],remapRead=0,remapActive=0,legacyAck=[0,0,0,0],receiverSaves=0;
-let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 0, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
+let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 2, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
 const commands = [], outputs = [];
 class FakeDevice extends EventTarget {
   opened = false; productName = 'SIMULATED DS5 GYRO'; productId = 0x0DF2;
@@ -65,9 +65,13 @@ try {
   check(document.querySelector('h1').textContent === 'DS5 控制中心', 'concise product title');
   check($('editSlot').options.length === 4 && $('profiles').hidden, 'four independent slots');
   $('connect').click(); await ready(); check(fake.opened, 'connect and read all slots');
+  check(edit===active&&$('editSlot').value==='0','connect edits the active profile rather than stale edit slot');
+  change('editSlot','1');await ready();$('read').click();await ready();check(edit===1,'explicit read preserves chosen inactive edit slot');
+  change('editSlot','0');await ready();
   check($('identityWarning').hidden, 'standard receiver does not show private identity warning');
   $('presetLong').click(); check($('hold').value === '300' && $('output').value === '1', 'long-L2 preset');
   change('editSlot', '1'); await ready(); check(edit === 1 && $('output').value === '0', 'editing inactive slot');
+  check(!$('editNotice').hidden&&$('editNotice').textContent.includes('配置 2'),'inactive editing is explicit');
   change('output', '1'); change('sx', '3'); $('apply').click(); await ready();
   check(profiles[1].sx === 3 && profiles[0].output === 0 && active === 0, 'apply only edited profile');
   $('activateSlot').click(); await ready(); check(active === 1 && $('manualSlot').value === '1', 'manual switch');

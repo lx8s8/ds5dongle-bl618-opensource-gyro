@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {receiverDefaults,encodeReceiver,decodeReceiver,remapDefaults,encodeRemap,decodeRemap} from '../web/receiver-protocol.mjs';
 import {HidTransport,requestReceiver} from '../web/transport.mjs';
-import {mappingSpeed,mouseSpeed,stickPosition,decodeInput} from '../web/mapping-model.mjs';
+import {mappingSpeed,mouseSpeed,stickPosition,stickVelocity,decodeInput} from '../web/mapping-model.mjs';
 import {defaults} from '../web/protocol.mjs';
 import {releaseAssets,safeAssetURL,fetchReleases} from '../web/releases.mjs';
+import {advanceView} from '../web/fps-preview.mjs';
 let c=receiverDefaults();assert.deepEqual(decodeReceiver(encodeReceiver(c)),c);c={...c,haptics_gain:1.5,led_r:12,controller_mode:1,tp_mode_enabled_mask:31};assert.deepEqual(decodeReceiver(encodeReceiver(c)),c);assert.equal(encodeReceiver(c).length,29);assert.throws(()=>encodeReceiver({...c,audio_buffer_length:129}));assert.throws(()=>encodeReceiver({...c,tp_mode_enabled_mask:0}));
 const table=remapDefaults();table[4]={type:1,value:44,modifier:3,flags:1};table[5]={type:2,value:1,modifier:0,flags:1};const b=new Uint8Array(127);b.set(encodeRemap(table),2);assert.deepEqual(decodeRemap(b).rows,table);assert.throws(()=>encodeRemap(table.slice(1)));
 const cfg={...defaults(),noise:1,accel:3,accelStart:30,accelEnd:180};assert.equal(mappingSpeed(cfg,0),0);assert.equal(mappingSpeed(cfg,30),58);assert.equal(mouseSpeed(cfg,180),179*2*3*12);assert.equal(stickPosition(cfg,0),0);assert.equal(stickPosition(cfg,3000),1);assert.equal(mouseSpeed({...cfg,adsMultiplier:.5},90,'x',true),mouseSpeed(cfg,90)/2);
@@ -28,3 +29,18 @@ assert.equal(await requestReceiver({getDevices:async()=>[],requestDevice:picker}
 assert.equal(pickerCalls,2,'first connection requests a device');
 assert.equal(await requestReceiver({requestDevice:async()=>[]}),undefined);
 console.log('receiver selection: existing grant, unsupported device, multiple receivers and cancellation passed');
+
+const game={...defaults(),maxTurn:360,stickDeadzone:10,stickPower:1};
+assert.deepEqual(stickVelocity(game,0,0),[0,0]);
+assert.deepEqual(stickVelocity(game,.1,0),[0,0]);
+assert(Math.abs(stickVelocity(game,.55,0)[0]-180)<1e-8);
+assert.deepEqual(stickVelocity(game,.6,.8),[216,288]);
+for(const speed of [1,10,45,90]) {const pos=stickPosition(game,speed);const vel=stickVelocity(game,pos,0)[0];assert(Math.abs(vel-mappingSpeed(game,speed))<1e-8);}
+assert.deepEqual(stickVelocity(game,NaN,0),[0,0]);
+const turned=advanceView({yaw:0,pitch:0},game,[0,0,1,-1],.1);
+assert(turned.yaw>0&&turned.pitch>0);
+assert.deepEqual(advanceView(turned,game,[0,0,0,0],.1),turned,'centred stick stops rotation and holds the new view');
+const reversed=advanceView(turned,game,[0,0,-1,1],.1);
+assert(Math.abs(reversed.yaw)<1e-8&&Math.abs(reversed.pitch)<1e-8,'reversal immediately moves in the new direction');
+assert.deepEqual(advanceView(turned,game,[0,0,1,1],1),turned,'suspended page does not integrate stale input');
+console.log('FPS preview: radial deadzone, rate units, direction and inverse curve round trips passed');
