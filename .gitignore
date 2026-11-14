@@ -16,3 +16,4 @@ bouffalo_sdk_ds5/
 *.code-workspace
 
 .desktop-build/
+firmware-build.log

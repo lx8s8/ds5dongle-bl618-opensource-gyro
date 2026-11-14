@@ -36,6 +36,8 @@
 
 来源：[上游 Release](https://github.com/sqlCRT/ds5dongle-bl618-opensource/releases/tag/v3.24)、[对应公开提交](https://github.com/sqlCRT/ds5dongle-bl618-opensource/commit/f7e36e1fb13151a7e9d376fe2f74f29cca104185)、[公开标签 API](https://api.github.com/repos/sqlCRT/ds5dongle-bl618-opensource/tags)。
 
+作者已在 [Issue #10 的回复](https://github.com/sqlCRT/ds5dongle-bl618-opensource/issues/10#issuecomment-5742496052) 说明：后续二进制文件继续发布，源码因正式接收器产品开发而暂缓更新。2026-11-14 核查其公开仓库、分支、项目说明及相关 Fork，未找到作者迁移后的 v3.24 公开源码。`chunqian/ds5dongle-bl618-opensource` 和 `infinitytom/ds5dongle-switch-pro` 有各自新增代码，均是基于公开基线的独立开发，不能直接视作上游 v3.24。
+
 上游原版没有本项目新增的体感报告，刷回后当前 G2 配置工具可能无法连接。更新页默认本项目仓库并包含公开测试版；没有公开 Release 时会明确显示暂无版本，并给出 Actions。草稿不可由匿名 API 读取；不会假造最新版本。上游未标 FS/HS 的包不推断 USB 速度，以附件说明为准。页面提供下载，暂不执行网页刷写或 OTA。
 
 ## 桌面构建
