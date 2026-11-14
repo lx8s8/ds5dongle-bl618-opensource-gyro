@@ -123,7 +123,7 @@ async function readAll() {
 }
 function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; }
 $('connect').onclick = () => action(async () => {
-  const chosen = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x054C, productId: 0x0CE6, usagePage: 1, usage: 5 }, { vendorId: 0x054C, productId: 0x0DF2, usagePage: 1, usage: 5 }] });
+  const chosen = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x1209, productId: 0x0001, usagePage: 1, usage: 5 }] });
   if (!chosen.length) return;
   const candidate = chosen[0], reports = candidate.collections.flatMap(c => c.featureReports || []);
   if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('请选择接收器，并更新至支持体感配置的固件');

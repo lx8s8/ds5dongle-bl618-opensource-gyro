@@ -15,8 +15,10 @@
 #define USB_KBD_INTERVAL_MS     4  /* 8 microframes = 1ms in HS */
 #endif
 
-#define USB_GAMEPAD_VID         0x054C
-#define USB_GAMEPAD_PID         0x0CE6
+/* Private diagnostic branch only: pid.codes 1209:0001 is not unique and is
+ * reserved for in-house testing. Do not use for distributed/sold devices. */
+#define USB_GAMEPAD_VID         0x1209
+#define USB_GAMEPAD_PID         0x0001
 
 #define USB_INTF_GAMEPAD        3   /* shifted: 0=AC, 1=AS_SPK, 2=AS_MIC, 3=Gamepad */
 #define USB_INTF_KBD            4

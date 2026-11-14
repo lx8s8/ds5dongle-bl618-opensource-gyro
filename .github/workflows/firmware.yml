@@ -1,4 +1,4 @@
-name: Firmware
+name: Private HID diagnostic
 
 on:
   push:
@@ -36,8 +36,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [lctech616, aim61, m0sdock]
-        usb: [fs, hs]
+        board: [lctech616]
+        usb: [fs]
     env:
       BL_SDK_BASE: ${{ github.workspace }}/.deps/bouffalo_sdk
       CMAKE_CMD: cmake
@@ -80,7 +80,7 @@ jobs:
       - name: Upload firmware package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: firmware-${{ matrix.board }}-${{ matrix.usb }}
+          name: hid-diagnostic-${{ matrix.board }}-${{ matrix.usb }}
           path: dist/*.zip
           if-no-files-found: error
           retention-days: 30
