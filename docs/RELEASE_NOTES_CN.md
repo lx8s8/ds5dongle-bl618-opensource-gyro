@@ -1,6 +1,14 @@
-# G2.1 体感固件与 DS5 控制中心
+# G2.2 原生绿色控制中心
 
 本版本基于上游公开 v3.18 源码，增加 G2.1 陀螺仪功能与本地控制中心。它不包含上游 v3.24 发布附件中的全部后续功能。
+
+## G2.2 桌面工具更新
+
+- 桌面启动器改为原生程序，网页直接嵌入单个二进制；移除打包中的 Python 解释器，保留全部配置、测试与 Release 下载功能。
+- Windows `.exe`／macOS `.app` 无需安装 Python、Rust、Node 或额外运行库；需已安装 Chrome／Edge。Windows 使用静态 CRT。
+- `portable.zip` 改名为 `source.zip`，明确它是需要 Python 的源码启动包；普通用户请选择对应系统的应用包。
+- GitHub 在 Windows x64、Mac Apple Silicon 和 Mac Intel 上分别构建并实际启动 HTTP 服务进行回归验证。
+- 本次仅替换桌面启动器，固件体感协议仍为 G2.1。
 
 ## G2.1.1 打包修正
 
@@ -22,10 +30,10 @@
 
 | 附件 | 用途 |
 | --- | --- |
-| `DS5-Control-Center-windows-amd64.zip` | Windows x64，解压后运行其中的 `.exe`，保留同目录所有文件 |
+| `DS5-Control-Center-windows-amd64.zip` | Windows x64 绿色程序，解压后双击 `.exe` |
 | `DS5-Control-Center-macos-arm64.zip` | Apple Silicon Mac，解压后运行 `.app` |
 | `DS5-Control-Center-macos-x86_64.zip` | Intel Mac，解压后运行 `.app` |
-| `DS5-Control-Center-portable.zip` | 网页与启动器源文件，需 Python 3 |
+| `DS5-Control-Center-source.zip` | 网页与启动器源文件，需 Python 3；普通用户不需要下载 |
 | `ds5dongle-<板型>-<fs/hs>-<提交号>.zip` | 匹配板型和 USB 速度的固件、刷机文件、网页、说明和构建来源 |
 | `SHA256SUMS` | 全部附件 ZIP 的 SHA256 校验值；各固件包内另有文件校验表 |
 

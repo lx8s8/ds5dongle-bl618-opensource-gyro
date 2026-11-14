@@ -1,6 +1,6 @@
 # DS5Dongle BL618
 
-The local Control Center includes a controller diagram, receiver settings, four gyro profiles, response curves, remapping and GitHub Release downloads. Use the launchers at the repository root, or build the self-contained macOS/Windows application. See [local usage and packaging](docs/CONTROL_CENTER_CN.md).
+The local Control Center includes a controller diagram, receiver settings, four gyro profiles, response curves, remapping and GitHub Release downloads. Download the native Windows/macOS application from [Releases](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases); no Python, Rust or Node installation is needed. Chrome or Edge is required. The source launchers need Python. See [local usage and packaging](docs/CONTROL_CENTER_CN.md).
 
 G2 adds four independent firmware gyro profiles, mouse/right-stick output, native Edge Fn bindings, configurable controller shortcuts, trigger hysteresis, L2 ADS sensitivity, board LED feedback and receiver diagnostics. Standard DualSense controllers can switch profiles, pause mapping, calibrate and hold a precision modifier without keeping the WebHID page open. All profiles default to off. See [the gyro guide](docs/GYRO_CN.md), [feature status](docs/ROADMAP_CN.md) and [hardware checklist](docs/HARDWARE_TEST_CN.md). Run `make -C tests check` for host tests; GitHub Actions builds/packages all six board/USB variants. Hardware validation remains pending.
 

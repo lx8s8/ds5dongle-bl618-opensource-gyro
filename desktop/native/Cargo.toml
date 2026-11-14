@@ -1,0 +1,13 @@
+[package]
+name = "ds5-control-center"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-only"
+build = "build.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

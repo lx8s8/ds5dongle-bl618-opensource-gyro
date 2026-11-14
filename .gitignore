@@ -17,3 +17,4 @@ bouffalo_sdk_ds5/
 
 .desktop-build/
 firmware-build.log
+desktop/native/target/

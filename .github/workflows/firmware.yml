@@ -139,7 +139,7 @@ jobs:
             DS5-Control-Center-windows-amd64.zip \
             DS5-Control-Center-macos-arm64.zip \
             DS5-Control-Center-macos-x86_64.zip \
-            DS5-Control-Center-portable.zip; do
+            DS5-Control-Center-source.zip; do
             test -s "dist/$package"
           done
           (cd dist && sha256sum *.zip > SHA256SUMS)

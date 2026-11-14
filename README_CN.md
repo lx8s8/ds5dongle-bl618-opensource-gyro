@@ -1,6 +1,6 @@
 # DS5Dongle BL618
 
-本地控制中心已包含手柄可视化、接收器设置、四档体感与曲线、按键映射、GitHub Release 查询下载。macOS 双击 `启动控制中心.command`，Windows 双击 `启动控制中心.cmd`（源码启动需 Python）；自包含应用与打包方式见 [控制中心说明](docs/CONTROL_CENTER_CN.md)。
+本地控制中心包含手柄可视化、接收器设置、四档体感与曲线、按键映射、GitHub Release 查询下载。普通用户从 [Releases](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases) 下载 Windows／Mac 对应应用包，解压双击即可，无需安装 Python、Rust 或 Node。源码启动器需 Python；详见 [控制中心说明](docs/CONTROL_CENTER_CN.md)。
 
 上游 Release v3.24 的固件附件与公开源码版本并不同步：当前公开源码仍是 v3.18 基线，本项目保留 G2 扩展，不能直接视为包含 v3.24 的全部功能。
 

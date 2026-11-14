@@ -4,8 +4,8 @@
 
 ## 打开方式
 
-- 已有 Python 3：macOS 双击仓库根目录的 `启动控制中心.command`；Windows 双击 `启动控制中心.cmd`。也可执行 `python3 desktop/launcher.py`。
-- 无 Python：使用桌面构建产物里的 macOS `.app` 或 Windows `.exe`。它们内置本地服务与网页，自动打开已安装的 Edge / Chrome。底部“退出本地工具”关闭服务。应用不包含浏览器本身。
+- 普通用户：下载对应系统的 `DS5-Control-Center-windows-amd64.zip`、`DS5-Control-Center-macos-arm64.zip` 或 `DS5-Control-Center-macos-x86_64.zip`，解压后双击 `.exe`／`.app`。这是原生绿色程序，网页嵌入程序，不需要安装 Python、Rust、Node 或额外运行库；仍需已安装桌面 Chrome／Edge。底部“退出本地工具”关闭服务。
+- 源码用户：`DS5-Control-Center-source.zip` 包含网页与源码启动器。已有 Python 3 时，macOS 双击 `启动控制中心.command`，Windows 双击 `启动控制中心.cmd`；也可执行 `python3 desktop/launcher.py`。旧版的 `portable.zip` 指这个源码包，现已改名以免混淆。
 - 网页可独立使用：在 `web/` 目录运行 `python3 -m http.server 8765 --bind 127.0.0.1`，访问 `http://127.0.0.1:8765/`。不要直接双击 `index.html`，模块加载与硬件权限需要合适的来源。
 
 本地启动器只监听 `127.0.0.1`，仅公开随包网页；浏览器向 GitHub 查询更新，不上传配置、输入报告或配对信息。同一接收器同时保持一个已连接的配置客户端；同页内的 Feature 请求统一排队。无网络时仍可设置接收器、导入导出配置与测试手柄，Release 检查需联网。若默认端口被占用，启动器会选空闲端口，新的来源需要重新授权 HID。
@@ -48,15 +48,17 @@
 python3 scripts/package_control_center.py
 ```
 
-自包含应用，在对应系统上运行（开发机需 Python 3 和 PyInstaller，成品不需要）：
+构建原生应用，在对应系统上运行（仅开发机需要 Python 3、Rustup 和系统编译工具，成品不需要）：
 
 ```sh
-python3 -m venv .desktop-build
-.desktop-build/bin/pip install -r desktop/requirements-build.txt
-.desktop-build/bin/python scripts/package_control_center.py --freeze
+rustup toolchain install 1.100.0 --profile minimal
+python3 scripts/package_control_center.py --native
+python3 tests/test_native_launcher.py
 ```
 
-Windows 使用 `.desktop-build\Scripts\python.exe` 和同目录 `pip.exe`。产物在 `dist/control-center/`。macOS 应用尚未做 Apple Developer ID 签名和公证；Windows 应用尚未做 Authenticode 签名。跨系统产物由 `Control center` Actions 在 Windows、macOS Apple Silicon 和 Intel 运行器分别构建，ZIP 名称包含架构，不能在 Mac 上直接交叉生成并验证 Windows 可执行文件。
+Windows 使用 `python`，开发机需 Visual Studio C++ Build Tools。Rust 工具链版本固定在 `desktop/native/rust-toolchain.toml`，没有第三方 Cargo 依赖。网页编译进二进制，Windows 静态链接 CRT；无需随包携带 Python 或浏览器。打包会附带项目及 Rust 标准库许可。产物在 `dist/control-center/`。
+
+macOS 应用尚未做 Apple Developer ID 签名和公证；Windows 应用尚未做 Authenticode 签名。跨系统产物由 `Control center` Actions 在 Windows、macOS Apple Silicon 和 Intel 运行器分别构建，并逐个平台实际启动原生服务、校验内嵌网页、来源限制及退出。ZIP 名称包含架构。
 
 ## Tauri 是否可行
 
