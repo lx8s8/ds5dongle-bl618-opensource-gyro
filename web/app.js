@@ -135,6 +135,7 @@ $('connect').onclick = () => action(async () => {
   try {
     reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(); await receiverUI.load(); device.addEventListener('inputreport', onInput);
     $('device').textContent = candidate.productName; $('connectionDot').classList.add('on'); samples = []; usbStick = metrics = null; diagnosticAt = 0; capture.reset();
+    $('identityWarning').hidden = candidate.vendorId !== 0x1209 || candidate.productId !== 0x0001;
     try { const version = await transport.read(0xF8, null); $('firmware').textContent = new TextDecoder().decode(version).replace(/\0.*$/s, ''); }
     catch { $('firmware').textContent = '读取失败'; }
     $('controllerModel').textContent = candidate.productName; message('连接成功');
@@ -146,6 +147,7 @@ async function close() {
   if (previous) { previous.removeEventListener('inputreport', onInput); if (previousTransport) await previousTransport.close(); else if (previous.opened) await previous.close(); }
   tester?.reset();
   $('device').textContent = $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
+  $('identityWarning').hidden = true;
   $('testProfile').textContent = '配置 — · Edge —';
   ['interval', 'factory', 'calibration', 'stick'].forEach(id => { $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
 }

@@ -119,11 +119,20 @@ class FirmwarePackageTests(unittest.TestCase):
         flags = self.root / "build/CMakeFiles/app.dir/flags.make"
         flags.parent.mkdir(parents=True)
         flags.write_text("C_DEFINES = -DUSB_DIAGNOSTIC_IDENTITY=1\n")
-        archive_path = self.package()
+        with patch.dict("os.environ", {"GITHUB_REF": "refs/heads/local-hid-test"}):
+            archive_path = self.package()
         self.assertIn("-hid-test-", archive_path.name)
         with zipfile.ZipFile(archive_path) as archive:
             info = json.loads(archive.read("ds5dongle-lctech616-fs-hid-test-aaaaaaaa/build-info.json"))
         self.assertEqual(info["usb_identity"], "private-hid-test")
+
+    def test_release_rejects_diagnostic_identity(self):
+        flags = self.root / "build/CMakeFiles/app.dir/flags.make"
+        flags.parent.mkdir(parents=True)
+        flags.write_text("C_DEFINES = -DUSB_DIAGNOSTIC_IDENTITY=1\n")
+        with patch.dict("os.environ", {"GITHUB_REF": "refs/tags/v3.18-g2.3"}):
+            with self.assertRaisesRegex(ValueError, "preserve the Sony USB identity"):
+                self.package()
 
     def test_rejects_wrong_board_or_speed(self):
         with self.assertRaisesRegex(ValueError, "requested"):

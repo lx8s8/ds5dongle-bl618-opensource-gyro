@@ -95,6 +95,8 @@ def build_package(root, board, usb, sdk_root, output):
         raise ValueError("SDK commit differs from .github/ci/dependencies.env")
 
     diagnostic = any("USB_DIAGNOSTIC_IDENTITY=1" in p.read_text() for p in (root / "build").rglob("flags.make"))
+    if diagnostic and os.environ.get("GITHUB_REF", "").startswith("refs/tags/v"):
+        raise ValueError("Release firmware must preserve the Sony USB identity; private HID test builds cannot be published")
     dirty = git_dirty(root)
     compiler = compiler_version()
     toolchain_url, toolchain_digest = toolchain_provenance(pins, compiler)

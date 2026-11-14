@@ -65,6 +65,7 @@ try {
   check(document.querySelector('h1').textContent === 'DS5 控制中心', 'concise product title');
   check($('editSlot').options.length === 4 && $('profiles').hidden, 'four independent slots');
   $('connect').click(); await ready(); check(fake.opened, 'connect and read all slots');
+  check($('identityWarning').hidden, 'standard receiver does not show private identity warning');
   $('presetLong').click(); check($('hold').value === '300' && $('output').value === '1', 'long-L2 preset');
   change('editSlot', '1'); await ready(); check(edit === 1 && $('output').value === '0', 'editing inactive slot');
   change('output', '1'); change('sx', '3'); $('apply').click(); await ready();
@@ -119,6 +120,10 @@ try {
   const data=new Uint8Array(63);data.fill(128,0,4);data[0]=255;data[4]=255;data[7]=0x28;data[32]=128;data[36]=128;const event=new Event('inputreport');event.reportId=1;event.data=new DataView(data.buffer);fake.dispatchEvent(event);await waitFor(()=>$('l2Value').textContent==='100%');check($('controllerVisual').querySelector('[data-bit="1"]').classList.contains('pressed'),'controller diagram follows real input events');check($('leftStickValue').textContent.includes('1.000'),'stick visualization follows USB input');
   location.hash='#tester';await waitFor(()=>!$('tester').hidden);
   $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');
+  fake.vendorId=0x1209;fake.productId=1;
+  $('connect').click(); await ready(); check(!$('identityWarning').hidden,'private test identity is clearly identified');
+  $('disconnect').click(); await waitFor(()=>!fake.opened&&!$('connect').disabled);
+  check($('identityWarning').hidden,'identity warning resets on disconnect');
   hid.requestDevice = async () => ({ length: 1, 0: { ...fake, collections: [{ featureReports: [{ reportId: 0xFC }] }] } });
   $('connect').click(); await waitFor(() => !$('connect').disabled);
   check($('message').classList.contains('error') && !fake.opened, 'unsupported firmware rejected');

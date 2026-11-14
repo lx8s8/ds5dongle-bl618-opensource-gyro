@@ -11,6 +11,7 @@ check:
 	$(CC) $(CFLAGS) -DLOG_LEVEL=0 -Istubs -I../src $(SOURCES) -lm -o $(BIN)
 	$(BIN)
 	python3 check_descriptors.py
+	python3 check_usb_identity.py
 	python3 check_usb_input_atomicity.py
 	@if command -v node >/dev/null 2>&1; then node web_protocol_test.mjs && node control_center_test.mjs && node diagnostic_capture_test.mjs; else echo "node unavailable: run web_protocol_test.mjs separately"; fi
 
