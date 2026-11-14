@@ -26,14 +26,14 @@
 
 #if defined(BOARD_LCTECH_616)
   #ifdef FORCE_FS_MODE
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.1"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.1" USB_IDENTITY_SUFFIX
   #else
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.1H"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.1H" USB_IDENTITY_SUFFIX
   #endif
 #elif defined(BOARD_M0S_DOCK)
-#define FIRMWARE_VERSION "M0S-DS5 3.5G2.1"
+#define FIRMWARE_VERSION "M0S-DS5 3.5G2.1" USB_IDENTITY_SUFFIX
 #else
-#define FIRMWARE_VERSION "BL618-DS5 3.5G2.1"
+#define FIRMWARE_VERSION "BL618-DS5 3.5G2.1" USB_IDENTITY_SUFFIX
 #endif
 
 #define USBD_MAX_POWER      250
@@ -556,10 +556,18 @@ static const char *desc_string_cb(uint8_t speed, uint8_t index)
     (void)speed;
     switch (index) {
     case 0: return "\x09\x04";
-    case 1: return "Sony Interactive Entertainment";
-    case 2: return current_dse_mode
-                 ? "DualSense Edge Wireless Controller"
-                 : "DualSense Wireless Controller";
+    case 1:
+#ifdef USB_DIAGNOSTIC_IDENTITY
+        return "BL616 HID Diagnostics";
+#else
+        return "Sony Interactive Entertainment";
+#endif
+    case 2:
+#ifdef USB_DIAGNOSTIC_IDENTITY
+        return current_dse_mode ? "BL616 HID Test (Edge)" : "BL616 HID Test (DualSense)";
+#else
+        return current_dse_mode ? "DualSense Edge Wireless Controller" : "DualSense Wireless Controller";
+#endif
     case 3:
         if (!serial_init) {
             uint8_t chipid[8];
@@ -736,7 +744,11 @@ void usb_gamepad_set_dse_mode(bool dse)
 {
     current_dse_mode = dse;
 
+#ifdef USB_DIAGNOSTIC_IDENTITY
+    uint16_t pid = USB_GAMEPAD_PID;
+#else
     uint16_t pid = dse ? DS5_EDGE_PID : DS5_PID;
+#endif
     device_desc[DEVICE_DESC_PID_OFF]     = pid & 0xFF;
     device_desc[DEVICE_DESC_PID_OFF + 1] = (pid >> 8) & 0xFF;
 

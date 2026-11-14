@@ -14,3 +14,5 @@ bouffalo_sdk_ds5/
 *.zip
 .DS_Store
 *.code-workspace
+
+.desktop-build/

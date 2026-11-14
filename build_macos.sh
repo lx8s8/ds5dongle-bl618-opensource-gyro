@@ -235,7 +235,7 @@ do_incremental() {
     local state previous="" state_file="build/.incremental-state"
     local image_stamp="build/.incremental-image" image_state=""
     state=$({
-        printf '%s\n' "$BUILD_KEY" "$BL_SDK_BASE" "$TOOLCHAIN_PREFIX" "$(command -v "${TOOLCHAIN_PREFIX}gcc")"
+        printf '%s\n' "$BUILD_KEY" "${USB_DIAGNOSTIC:-0}" "$BL_SDK_BASE" "$TOOLCHAIN_PREFIX" "$(command -v "${TOOLCHAIN_PREFIX}gcc")"
         "${TOOLCHAIN_PREFIX}gcc" --version
         "${CMAKE_CMD:-cmake}" --version
         "$MAKE_CMD" --version

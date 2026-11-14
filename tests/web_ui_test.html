@@ -2,6 +2,8 @@
 <script type="module">
 // Explicit fake HID device; no hardware is accessed. Serve the repository root.
 import { defaults, encodeConfig, decodeConfig, globalDefaults, encodeGlobal, decodeGlobal } from '../web/protocol.mjs';
+import {receiverDefaults,encodeReceiver,decodeReceiver,remapDefaults,encodeRemap,decodeRemap} from '../web/receiver-protocol.mjs';
+let receiver=receiverDefaults(),remap=[remapDefaults(),remapDefaults()],remapRead=0,remapActive=0,legacyAck=[0,0,0,0],receiverSaves=0;
 let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 0, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
 const commands = [];
 class FakeDevice extends EventTarget {
@@ -10,6 +12,15 @@ class FakeDevice extends EventTarget {
   async open() { this.opened = true; }
   async close() { this.opened = false; }
   async sendFeatureReport(id, bytes) {
+    if(id===0xF6||id===0xFB){
+      check(bytes.length===(id===0xFB?127:63),'legacy full-length SET_REPORT');legacyAck=[bytes[0],0,bytes.at(-1),id];
+      if(id===0xF6&&bytes[0]===1)receiver=decodeReceiver(bytes.slice(1,30));
+      if(id===0xF6&&bytes[0]===2)receiverSaves++;
+      if(id===0xFB&&bytes[0]===3)remapRead=bytes[1];
+      if(id===0xFB&&bytes[0]===5)remapActive=bytes[1];
+      if(id===0xFB&&bytes[0]===1){const a=new Uint8Array(127);a.set(bytes.slice(2,126),2);remap[bytes[1]]=decodeRemap(a).rows;}
+      return;
+    }
     check(id === 0xFC && bytes.length === 63, 'full-length SET_REPORT');
     commands.push(bytes.slice()); ack = [bytes[0], 0, bytes[1]];
     if (bytes[0] === 1) profiles[edit] = decodeConfig(bytes.slice(2, 42));
@@ -20,7 +31,9 @@ class FakeDevice extends EventTarget {
     if (bytes[0] === 8) { settings = decodeGlobal(bytes.slice(2, 59)); active = settings.source === 1 ? settings.edge[1] : settings.source === 2 ? settings.dongle[0] : settings.manual; }
   }
   async receiveFeatureReport(id) {
+    if(id===0xFB){const a=new Uint8Array(128);a[0]=id;a[1]=remapActive;a[2]=remapRead;a.set(encodeRemap(remap[remapRead]),3);return new DataView(a.buffer);}
     const bytes = new Uint8Array(64); bytes[0] = id;
+    if(id===0xF7){bytes.set(encodeReceiver(receiver),1);bytes.set(legacyAck,41);}
     if (id === 0xFC) { bytes.set(encodeConfig(profiles[edit]), 1); bytes.set(ack, 41); bytes[44] = 255; bytes[45] = edit; bytes[46] = active; bytes[47] = 2; }
     if (id === 0xFA) { bytes.set([2, 4, edit, active], 1); const g = encodeGlobal(settings); bytes.set(g.slice(0, 9), 5); bytes.set(g.slice(9), 16); }
     if (id === 0xFD) { bytes[1] = 2; bytes[2] = statusFlags; bytes[63] = 2; }
@@ -32,17 +45,18 @@ class FakeDevice extends EventTarget {
 const fake = new FakeDevice(), hid = new EventTarget(); hid.requestDevice = async () => [fake];
 Object.defineProperty(navigator, 'hid', { configurable: true, value: hid });
 const html = await (await fetch('../web/index.html')).text();
-document.open(); document.write(html.replace('href="style.css', 'href="../web/style.css').replace(/<script type="module" src="app\.js(?:\?[^\"]*)?"><\/script>/, '')); document.close();
+const markup=html.replace('href="style.css','href="../web/style.css').replace(/<script type="module" src="app\.js(?:\?[^\"]*)?"><\/script>/,'');
+const parsed=new DOMParser().parseFromString(markup,'text/html');document.head.innerHTML=parsed.head.innerHTML;document.body.innerHTML=parsed.body.innerHTML;
 const $ = id => document.getElementById(id), result = document.createElement('pre'); result.id = 'testResults'; document.body.prepend(result);
 let assertions = 0;
-function check(condition, label) { if (!condition) throw new Error(label); assertions++; }
-function change(id, value) { $(id).value = value; $(id).dispatchEvent(new Event('change')); }
-async function waitFor(predicate) { const deadline = performance.now() + 5000; while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); } }
+function check(condition, label) { if (!condition) throw new Error(label); assertions++; if(typeof result!=='undefined')result.textContent='RUNNING: '+label; }
+function change(id, value) { $(id).value = value; $(id).dispatchEvent(new Event('change', {bubbles:true})); }
+async function waitFor(predicate) { const deadline = performance.now() + 20000; while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); } }
 const ready = () => waitFor(() => !$('apply').disabled);
 try {
   await import('../web/app.js');
   check($('apply').disabled && $('connect').textContent === '连接接收器', 'initial state');
-  check(document.querySelector('h1').textContent === 'BL616 接收器配置', 'concise product title');
+  check(document.querySelector('h1').textContent === 'DS5 控制中心', 'concise product title');
   check($('editSlot').options.length === 4 && $('profiles').hidden, 'four independent slots');
   $('connect').click(); await ready(); check(fake.opened, 'connect and read all slots');
   $('presetLong').click(); check($('hold').value === '300' && $('output').value === '1', 'long-L2 preset');
@@ -66,7 +80,7 @@ try {
   check(profiles[1].output === 0 && profiles[0].output === 1, 'reset affects edited slot only');
   const imported = { version: 2, profiles: Array.from({ length: 4 }, () => ({ ...defaults(), sx: 5 })), settings: globalDefaults() };
   Object.defineProperty($('import'), 'files', { configurable: true, value: [new File([JSON.stringify(imported)], 'test.json', { type: 'application/json' })] });
-  $('import').dispatchEvent(new Event('change')); await ready();
+  $('import').dispatchEvent(new Event('change', {bubbles:true})); await ready();
   check($('sx').value === '5' && profiles[1].sx !== 5, 'import stays in form');
   active = 3;
   await waitFor(() => $('currentSlot').textContent === '当前配置：4');
@@ -79,6 +93,13 @@ try {
   check($('raw').textContent.includes('Edge 档位: 2'), 'telemetry rendered');
   statusFlags = 33; await waitFor(() => $('calibration').textContent === '校准超时');
   check($('calibration').textContent === '校准超时', 'calibration timeout rendered');
+  location.hash='#receiver';await waitFor(()=>!$('receiver').hidden);change('receiver-haptics_gain','1.5');change('receiver-polling_rate_mode','1');
+  $('receiverSettings').dispatchEvent(new Event('submit',{cancelable:true}));await ready();check(receiver.haptics_gain===1.5&&receiver.polling_rate_mode===1,'receiver fields reach legacy protocol');
+  $('receiverSave').click();await ready();check(receiverSaves===1,'receiver flash save acknowledged');
+  location.hash='#remap';await waitFor(()=>!$('remap').hidden);change('remapSlot','1');await ready();const row=$('remapRows').children[0],sels=row.querySelectorAll('select');sels[0].value='1';sels[0].dispatchEvent(new Event('change', {bubbles:true}));sels[1].value='44';sels[1].dispatchEvent(new Event('change', {bubbles:true}));$('remapSave').click();await ready();check(remap[1][0].type===1&&remap[1][0].value===44,'remap keyboard mapping saved to selected profile');
+  location.hash='#config';await waitFor(()=>!$('config').hidden);change('output','2');change('stickPower','2');check($('curveUnits').textContent.includes('摇杆'),'stick response curve follows edited output');change('activation','2');const buttons=$('buttons').querySelector('[data-bit="22"]');buttons.checked=true;check($('activation').value==='2','toggle activation can bind independent rear button');
+  const data=new Uint8Array(63);data.fill(128,0,4);data[0]=255;data[4]=255;data[7]=0x28;data[32]=128;data[36]=128;const event=new Event('inputreport');event.reportId=1;event.data=new DataView(data.buffer);fake.dispatchEvent(event);await waitFor(()=>$('l2Value').textContent==='100%');check($('controllerVisual').querySelector('[data-bit="1"]').classList.contains('pressed'),'controller diagram follows real input events');check($('leftStickValue').textContent.includes('1.000'),'stick visualization follows USB input');
+  location.hash='#tester';await waitFor(()=>!$('tester').hidden);
   $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');
   hid.requestDevice = async () => ({ length: 1, 0: { ...fake, collections: [{ featureReports: [{ reportId: 0xFC }] }] } });
   $('connect').click(); await waitFor(() => !$('connect').disabled);

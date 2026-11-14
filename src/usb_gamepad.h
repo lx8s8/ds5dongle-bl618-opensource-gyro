@@ -15,8 +15,16 @@
 #define USB_KBD_INTERVAL_MS     4  /* 8 microframes = 1ms in HS */
 #endif
 
+/* Private diagnostic identity is only for local HID routing tests. */
+#ifdef USB_DIAGNOSTIC_IDENTITY
+#define USB_GAMEPAD_VID         0x1209
+#define USB_GAMEPAD_PID         0x0001
+#define USB_IDENTITY_SUFFIX     "T"
+#else
 #define USB_GAMEPAD_VID         0x054C
 #define USB_GAMEPAD_PID         0x0CE6
+#define USB_IDENTITY_SUFFIX     ""
+#endif
 
 #define USB_INTF_GAMEPAD        3   /* shifted: 0=AC, 1=AS_SPK, 2=AS_MIC, 3=Gamepad */
 #define USB_INTF_KBD            4

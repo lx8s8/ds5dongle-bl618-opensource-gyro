@@ -94,10 +94,11 @@ def build_package(root, board, usb, sdk_root, output):
     if sdk_commit != pins["SDK_REF"]:
         raise ValueError("SDK commit differs from .github/ci/dependencies.env")
 
+    diagnostic = any("USB_DIAGNOSTIC_IDENTITY=1" in p.read_text() for p in (root / "build").rglob("flags.make"))
     dirty = git_dirty(root)
     compiler = compiler_version()
     toolchain_url, toolchain_digest = toolchain_provenance(pins, compiler)
-    package_name = f"ds5dongle-{board}-{usb}-{commit[:8]}{'-dirty' if dirty else ''}"
+    package_name = f"ds5dongle-{board}-{usb}{'-hid-test' if diagnostic else ''}-{commit[:8]}{'-dirty' if dirty else ''}"
     binary_name = f"ds5dongle-{board}{'-hs' if usb == 'hs' else ''}.bin"
     output.mkdir(parents=True, exist_ok=True)
     archive = output / f"{package_name}.zip"
@@ -140,6 +141,7 @@ def build_package(root, board, usb, sdk_root, output):
             "built_at_utc": datetime.now(timezone.utc).isoformat(),
             "partition_table": PARTITION_TABLE,
             "hardware_validated": False,
+            "usb_identity": "private-hid-test" if diagnostic else "standard",
         }
         repository = os.environ.get("GITHUB_REPOSITORY")
         run_id = os.environ.get("GITHUB_RUN_ID")

@@ -32,6 +32,10 @@ target_sources(app PRIVATE
     src/dongle_control.c
 )
 
+if(DEFINED ENV{USB_DIAGNOSTIC} AND "$ENV{USB_DIAGNOSTIC}" STREQUAL "1")
+    target_compile_definitions(app PRIVATE USB_DIAGNOSTIC_IDENTITY=1)
+endif()
+
 sdk_add_include_directories(src)
 sdk_add_include_directories(${BL_SDK_BASE}/components/wireless/bluetooth/blestack/src/include)
 sdk_add_include_directories(${BL_SDK_BASE}/components/wireless/bluetooth/btprofile/include)

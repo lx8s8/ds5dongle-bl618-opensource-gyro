@@ -2,7 +2,7 @@ export const CONFIG_REPORT = 0xFC, STATUS_REPORT = 0xFD, PROFILE_REPORT = 0xFA, 
 export const buttonNames = ['□', '×', '○', '△', 'L1', 'R1', 'L2', 'R2', 'Create', 'Options', 'L3', 'R3', 'PS', '触摸板按下', 'Mute', '↑', '↓', '←', '→', 'Fn 左', 'Fn 右', '背键左 L4', '背键右 R4', '触摸接触'];
 export const fields = [
   { id: 'output', label: '输出方式', group: 'activation', offset: 1, options: ['关闭体感', '鼠标', '右摇杆'], default: 0 },
-  { id: 'activation', label: '启用方式', group: 'activation', offset: 2, options: ['始终启用', '按住启用', '按一次切换开关', '按住暂停'], default: 1 },
+  { id: 'activation', label: '启用方式', group: 'activation', offset: 2, options: ['始终启用', '按住启用', '按一下开启 / 再按关闭', '按住暂停'], default: 1 },
   { id: 'trigger', label: '扳机条件', group: 'activation', offset: 3, options: ['无', 'L2 / LT', 'R2 / RT'], default: 1 },
   { id: 'threshold', label: '扳机阈值 · 1–255', group: 'activation', offset: 4, min: 1, max: 255, default: 64 },
   { id: 'releaseThreshold', label: '释放阈值 · 1–255', group: 'activation', offset: 37, min: 1, max: 255, default: 64 },

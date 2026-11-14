@@ -1,7 +1,14 @@
 import { CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT, REPORT_SIZE, buttonNames, fields, defaults, encodeConfig, decodeConfig, featureBytes, decodeStatus, globalDefaults, encodeGlobal, decodeProfiles, decodeDiagnostics, importBundle } from './protocol.mjs';
+import { initLocalApp } from './local-app.mjs';
+import { HidTransport } from './transport.mjs';
+import { initReceiverUI } from './receiver-ui.mjs';
+import { initTester } from './tester.mjs';
+import { initReleases } from './releases.mjs';
+import { mouseSpeed, stickPosition } from './mapping-model.mjs';
 import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
 
 const $ = id => document.getElementById(id);
+let transport, receiverUI, tester;
 let device, busy = false, sequence = 0, live, samples = [], usbStick, metrics, diagnosticAt = 0, editSlot = 0, manualTouched = false;
 let drafts = Array.from({ length: 4 }, defaults);
 const deviceButtons = ['apply', 'save', 'read', 'defaults', 'calibrate', 'clearCalibration', 'disconnect', 'activateSlot'];
@@ -97,48 +104,43 @@ function controls() {
   $('activateSlot').disabled ||= Number($('switchSource').value) !== 0;
   $('manualSlot').disabled = busy || Number($('switchSource').value) !== 0;
   $('export').disabled = $('import').disabled = busy;
+  receiverUI?.controls(!!device, busy);
 }
-async function action(fn) { if (busy) return; busy = true; controls(); try { await fn(); } catch (e) { message(e.message || String(e), true); } finally { busy = false; controls(); } }
-async function receive(id) { if (!device?.opened) throw new Error('请先连接接收器'); return featureBytes(await device.receiveFeatureReport(id), id); }
+async function action(fn) { if (busy) return; busy = true; controls(); try { await fn(); } catch (e) { message(e.message || String(e), true); } finally { busy = false; controls(); refreshConfiguration(); } }
+async function receive(id) { if (!device?.opened) throw new Error('请先连接接收器'); return transport.read(id); }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-function currentSlot(n) { $('currentSlot').textContent = n < 4 ? `当前配置：${n + 1}` : '当前配置：关闭'; }
+let activeSlot = 255;
+function currentSlot(n) { activeSlot = n; $('currentSlot').textContent = n < 4 ? `当前配置：${n + 1}` : '当前配置：关闭'; refreshProfiles(); }
 async function command(cmd, value) {
   if (!device?.opened) throw new Error('请先连接接收器');
-  const payload = new Uint8Array(REPORT_SIZE); sequence = sequence % 255 + 1; payload[0] = cmd; payload[1] = sequence;
-  if (value) payload.set(cmd === 1 ? encodeConfig(value) : value, 2);
-  await device.sendFeatureReport(CONFIG_REPORT, payload);
-  const deadline = performance.now() + 2500;
-  while (performance.now() < deadline) {
-    await delay(30); const result = await receive(CONFIG_REPORT);
-    if (result[40] !== cmd || result[42] !== sequence) continue;
-    if (result[41]) throw new Error(result[41] === 2 ? '保存失败，当前设置仍生效' : '设置无效，请检查参数');
-    currentSlot(result[45]); return decodeConfig(result);
-  }
-  throw new Error('操作超时，请重新读取配置');
+  const result = await transport.gyro(cmd, value ? cmd === 1 ? encodeConfig(value) : value : []);
+  currentSlot(result[45]); return decodeConfig(result);
 }
 async function readAll() {
   const info = decodeProfiles(await receive(PROFILE_REPORT)); renderGlobal(info.settings); editSlot = info.edit;
   for (let i = 0; i < 4; i++) drafts[i] = await command(6, [i]);
   await command(6, [editSlot]); $('editSlot').value = editSlot; render(drafts[editSlot]); currentSlot(info.active);
 }
-function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; }
+function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) { usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; tester.updateInput(new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength)); } }
 $('connect').onclick = () => action(async () => {
-  const chosen = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x054C, productId: 0x0CE6, usagePage: 1, usage: 5 }, { vendorId: 0x054C, productId: 0x0DF2, usagePage: 1, usage: 5 }] });
+  const chosen = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x054C, productId: 0x0CE6, usagePage: 1, usage: 5 }, { vendorId: 0x054C, productId: 0x0DF2, usagePage: 1, usage: 5 }, { vendorId: 0x1209, productId: 0x0001, usagePage: 1, usage: 5 }] });
   if (!chosen.length) return;
   const candidate = chosen[0], reports = candidate.collections.flatMap(c => c.featureReports || []);
   if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('请选择接收器，并更新至支持体感配置的固件');
-  await candidate.open(); device = candidate;
+  await candidate.open(); device = candidate; transport = new HidTransport(candidate);
   try {
-    const config = await receive(CONFIG_REPORT); sequence = config[42]; await readAll(); device.addEventListener('inputreport', onInput);
+    const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(); await receiverUI.load(); device.addEventListener('inputreport', onInput);
     $('device').textContent = candidate.productName; $('connectionDot').classList.add('on'); samples = []; usbStick = metrics = null; diagnosticAt = 0;
-    try { const version = await device.receiveFeatureReport(0xF8); const bytes = new Uint8Array(version.buffer, version.byteOffset, version.byteLength); $('firmware').textContent = new TextDecoder().decode(bytes.subarray(bytes[0] === 0xF8 ? 1 : 0)).replace(/\0.*$/s, ''); }
+    try { const version = await transport.read(0xF8, null); $('firmware').textContent = new TextDecoder().decode(version).replace(/\0.*$/s, ''); }
     catch { $('firmware').textContent = '读取失败'; }
-    message('连接成功');
+    $('controllerModel').textContent = candidate.productName; message('连接成功');
   } catch (e) { await close(); throw e; }
 });
 async function close() {
-  const previous = device; device = null; live = usbStick = metrics = null;
-  if (previous) { previous.removeEventListener('inputreport', onInput); if (previous.opened) await previous.close(); }
+  await tester?.stop().catch(() => {});
+  const previous = device, previousTransport = transport; device = null; transport = null; live = usbStick = metrics = null;
+  if (previous) { previous.removeEventListener('inputreport', onInput); if (previousTransport) await previousTransport.close(); else if (previous.opened) await previous.close(); }
+  tester?.reset();
   $('device').textContent = $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
   $('testProfile').textContent = '配置 — · Edge —';
   ['interval', 'factory', 'calibration', 'stick'].forEach(id => { $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
@@ -205,7 +207,45 @@ async function poll() {
   }
   setTimeout(poll, 100);
 }
-function route() { const active = ['config', 'tester', 'update'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'config'; for (const name of ['config', 'tester', 'update']) $(name).hidden = name !== active; for (const link of document.querySelectorAll('nav a')) { if (link.hash === `#${active}`) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); } }
-window.addEventListener('hashchange', route);
-render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route(); initMouseTest();
-if (!navigator.hid) message('当前浏览器不支持，请使用 Chrome 或 Edge', true);
+const routes = ['receiver', 'remap', 'config', 'tester', 'update'];
+function route() {
+  const target=location.hash.slice(1), anchor=document.getElementById(target);
+  const active=routes.includes(target)?target:['stickTests','sensorTests','outputTests','rateTests'].includes(target)?'tester':'tester';
+  for(const name of routes) $(name).hidden=name!==active;
+  for(const link of document.querySelectorAll('.sidebar nav a')){if(link.hash===`#${active}`)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');}
+  if(anchor&&!routes.includes(target))anchor.scrollIntoView({block:'start',behavior:'smooth'});else window.scrollTo(0,0);
+}
+function refreshProfiles(){
+ if(!$('profileStrip'))return;
+ const chips=$('profileStrip').children;
+ for(let i=0;i<4;i++){const chip=chips[i];if(!chip)continue;chip.classList.toggle('active',i===activeSlot);chip.classList.toggle('editing',i===editSlot);chip.disabled=busy;chip.querySelector('span').textContent=['关闭','鼠标','右摇杆'][i===editSlot?Number($('output').value):drafts[i].output];}
+}
+function refreshConfiguration(){
+ refreshProfiles();if(!$('mappingCurve'))return;
+ try{
+  const c=formConfig(),canvas=$('mappingCurve'),ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,pad=48,max=Number($('curveMax').value),fn=c.output===2?stickPosition:mouseSpeed;
+  const yMax=c.output===2?1:Math.max(1,fn(c,max,'x'),fn(c,max,'y'),fn(c,max,'x',true),fn(c,max,'y',true));
+  ctx.clearRect(0,0,w,h);ctx.font='12px system-ui';ctx.lineWidth=1;ctx.strokeStyle='#cddce3';ctx.fillStyle='#82919a';
+  for(let i=0;i<=4;i++){const y=h-pad-(h-pad*2)*i/4;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(w-18,y);ctx.stroke();ctx.fillText((yMax*i/4).toFixed(c.output===2?2:0),4,y+4);const x=pad+(w-pad-18)*i/4;ctx.fillText(String(max*i/4),x-10,h-15);}
+  for(const [axis,color] of [['x','#087f70'],['y','#d29a43']])for(const ads of [false,true]){ctx.strokeStyle=color;ctx.lineWidth=ads?1.5:2.5;ctx.setLineDash(ads?[5,5]:[]);ctx.beginPath();for(let i=0;i<=150;i++){const x=pad+i/150*(w-pad-18),y=h-pad-fn(c,max*i/150,axis,ads)/yMax*(h-pad*2);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();}ctx.setLineDash([]);
+  $('curveUnits').textContent=c.output===2?'右摇杆归一化幅度':'鼠标 counts/s';
+  const speed=Number($('curveSpeed').value);$('curveSpeedLabel').textContent=speed+' °/s';$('curveOutput').textContent=c.output===2?(fn(c,speed)*100).toFixed(1)+'% 满杆':fn(c,speed).toFixed(0)+' counts/s';
+ }catch(e){$('curveOutput').textContent='请检查参数';}
+}
+receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
+tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message});
+initReleases();
+for(let i=0;i<4;i++){const button=document.createElement('button');button.className='profile-chip';button.type='button';const title=document.createElement('strong');title.textContent='配置 '+(i+1);button.append(title,document.createElement('span'));button.onclick=()=>{ $('editSlot').value=i;$('editSlot').dispatchEvent(new Event('change'));};$('profileStrip').append(button);}
+$('settings').addEventListener('input',refreshConfiguration);$('settings').addEventListener('change',refreshConfiguration);$('curveSpeed').oninput=$('curveMax').onchange=refreshConfiguration;
+$('curveExport').onclick=()=>{try{const c=formConfig(),rows=['hand_dps,mouse_x_counts_s,mouse_y_counts_s,stick_x,stick_y,mouse_x_ads,stick_x_ads'];for(let s=0;s<=Number($('curveMax').value);s++)rows.push([s,mouseSpeed(c,s,'x'),mouseSpeed(c,s,'y'),stickPosition(c,s,'x'),stickPosition(c,s,'y'),mouseSpeed(c,s,'x',true),stickPosition(c,s,'x',true)].join(','));download('ds5-mapping-curve.csv',rows.join('\n'),'text/csv');}catch(e){message(e.message,true);}};
+window.addEventListener('controller-button-picked',e=>{const bit=e.detail;if(bit<=18){location.hash='#remap';$('remapRows').children[bit]?.querySelector('select')?.focus();}else{location.hash='#config';$('buttons').querySelector(`[data-bit="${bit}"]`)?.focus();}});
+try{if(localStorage.getItem('ds5-theme')==='dark')document.documentElement.dataset.theme='dark';}catch{}
+$('themeToggle').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';try{localStorage.setItem('ds5-theme',dark?'dark':'light');}catch{}};
+window.addEventListener('hashchange',route);
+render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route(); initMouseTest(); refreshConfiguration();
+
+initLocalApp({beforeQuit:async()=>{await close();},message});
+
+if (!navigator.hid) message(location.protocol==='file:'?'请通过双击启动器打开网页，不能直接打开 HTML 文件。':'当前浏览器不支持 WebHID，请使用桌面 Chrome / Edge。',true);
+
+window.addEventListener('load',()=>{if(routes.includes(location.hash.slice(1)))window.scrollTo(0,0);});

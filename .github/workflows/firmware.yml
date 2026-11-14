@@ -98,10 +98,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  control-center:
+    name: Desktop control center
+    uses: ./.github/workflows/control-center.yml
+
   release:
     name: Draft tagged release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [tests, build]
+    needs: [tests, build, control-center]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
@@ -112,7 +116,13 @@ jobs:
           pattern: firmware-*
           path: dist
           merge-multiple: true
-      - name: Attach all six packages to a draft release
+      - name: Download control center packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: control-center-*
+          path: dist
+          merge-multiple: true
+      - name: Attach firmware and control center packages to a draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

@@ -115,6 +115,16 @@ class FirmwarePackageTests(unittest.TestCase):
         self.assertTrue(info["source_dirty"])
         self.assertFalse(info["sdk_dirty"])
 
+    def test_diagnostic_build_is_distinct_from_standard_package(self):
+        flags = self.root / "build/CMakeFiles/app.dir/flags.make"
+        flags.parent.mkdir(parents=True)
+        flags.write_text("C_DEFINES = -DUSB_DIAGNOSTIC_IDENTITY=1\n")
+        archive_path = self.package()
+        self.assertIn("-hid-test-", archive_path.name)
+        with zipfile.ZipFile(archive_path) as archive:
+            info = json.loads(archive.read("ds5dongle-lctech616-fs-hid-test-aaaaaaaa/build-info.json"))
+        self.assertEqual(info["usb_identity"], "private-hid-test")
+
     def test_rejects_wrong_board_or_speed(self):
         with self.assertRaisesRegex(ValueError, "requested"):
             self.package("aim61", "hs")
