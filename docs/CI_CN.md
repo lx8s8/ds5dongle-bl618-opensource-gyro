@@ -2,7 +2,7 @@
 
 Git 负责保存源码，GitHub Actions 在云端编译。本项目配置位于 [firmware.yml](../.github/workflows/firmware.yml)，不需要把本地 SDK、工具链或固件二进制提交进仓库，也无需额外设置 Secret。
 
-G1历史验证：2026-11-14（北京时间），[运行 43458084369](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/actions/runs/43458084369) 已实际通过主机检查与全部六个版本的编译、打包，生成六个固件 Artifact 和六个调试 Artifact。默认 LCTech FS 包已下载核对官方 Artifact SHA256、包内校验和、构建来源及刷机文件。G2增加的四档/快捷动作等以当前提交对应的Actions结果为准，请从分支与提交号确认下载版本。真实硬件尚未验收；按 [真机清单](HARDWARE_TEST_CN.md) 记录，功能状态见 [优化清单](ROADMAP_CN.md)。
+G1历史验证：2026-11-14（北京时间），[运行 43458084369](https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/actions/runs/43458084369) 已实际通过主机检查与全部六个版本的编译、打包，生成六个固件 Artifact 和六个调试 Artifact。默认 LCTech FS 包已下载核对官方 Artifact SHA256、包内校验和、构建来源及刷机文件。G2增加的四档/快捷动作等以当前提交对应的Actions结果为准，请从分支与提交号确认下载版本。已有 LCTech FS 诊断固件的部分真机验收，见 [验收结果](HARDWARE_RESULT_2026-11-14_CN.md)；其他构建组合按 [真机清单](HARDWARE_TEST_CN.md) 继续记录。
 
 ## 触发与下载
 
@@ -36,11 +36,11 @@ CI 的成功表示测试、编译和打包通过；实际蓝牙连接、音频�
 当某个提交准备好发布后，为它创建 `v` 开头的标签并推送。例如选定版本号后运行：
 
 ```sh
-git tag v3.18-gyro.1
-git push origin v3.18-gyro.1
+git tag -a v3.18-g2.1 -m "G2.1 control center"
+git push origin v3.18-g2.1
 ```
 
-六个版本全部成功后，工作流自动创建带六个刷机包的 **Release 草稿**。检查包和说明后，在 GitHub Releases 中手动发布；测试版可勾选 Pre-release。本次配置不会自行创建版本标签或发布正式版本。
+六组固件及 Windows x64、macOS Apple Silicon／Intel 三个桌面包全部成功后，工作流检查附件齐全并生成 `SHA256SUMS`，先上传到草稿，再自动公开发布。说明来自 `docs/RELEASE_NOTES_CN.md`，发布前应随版本更新。带连字符的 `v*` 标签（例如 `v3.18-g2.1`）作为 Pre-release 发布，不设为 Latest；不带连字符的标签作为正式版发布。更新页默认包含测试版，因此可直接查到 G2.1。工作流不会自行创建版本标签。
 
 如果该标签已经存在 Release，自动创建会明确失败，避免覆盖已有版本附件；可先检查现有 Release，再决定是否删除草稿重跑或使用新版本标签。普通 Actions 构建和下载不需要写权限，只有标签 Release 作业使用 `contents: write`。
 

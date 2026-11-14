@@ -58,7 +58,7 @@ Apple Silicon Mac 本地开发可运行 `bash scripts/setup_macos.sh` 准备环�
 
 仓库内的 [Firmware 工作流](.github/workflows/firmware.yml) 会在推送、Pull Request 和手动运行时，测试并构建三种板型 × FS/HS 六个版本。进入 GitHub 仓库 **Actions → Firmware → 成功的运行 → Artifacts**，下载对应的 `firmware-板型-速度`，解压其中的刷机 ZIP。LCTech BL616 通常选择 `firmware-lctech616-fs`。
 
-每个包包含主固件、Boot2、分区文件、刷机配置、网页配置工具、版本记录和 SHA256 校验。推送 `v*` 标签还会自动创建包含六个包的 Release 草稿。详细触发、下载和发布步骤见 [自动构建说明](docs/CI_CN.md)。
+每个包包含主固件、Boot2、分区文件、刷机配置、网页配置工具、版本记录和 SHA256 校验。推送 `v*` 标签后，六组固件和三个桌面包全部通过才会自动发布 Release；带连字符的标签发布为测试版。详细触发、下载和发布步骤见 [自动构建说明](docs/CI_CN.md)。
 
 ### 1. 安装 Bouffalo SDK（必须使用本项目分支）
 
@@ -125,7 +125,7 @@ bash build_macos.sh strip      # 删除 .o/.a 中间文件，缩小 build 目录
 - **默认 USB 速度：Full-Speed（12Mbps）**；传 `USB_SPEED=hs` 可构建 High-Speed 变体（轮询上限更高，但对线材更敏感）。
 - 切换 `BOARD_TYPE` 或 `USB_SPEED` 会自动触发一次干净重编（CMake 缓存不兼容）。
 
-产物位于 `firmware/{board}/ds5dongle-{board}.bin`（约 800KB），以及 boot2/partition 文件和 `flash_prog_cfg.ini`。编译产物已被 git 忽略；自动构建通过 Actions Artifacts / Release 草稿分发，不把二进制提交进 Git。
+产物位于 `firmware/{board}/ds5dongle-{board}.bin`（约 800KB），以及 boot2/partition 文件和 `flash_prog_cfg.ini`。编译产物已被 git 忽略；自动构建通过 Actions Artifacts / Releases 分发，不把二进制提交进 Git。
 
 #### Windows 编译
 

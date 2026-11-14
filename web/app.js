@@ -209,11 +209,14 @@ async function poll() {
 }
 const routes = ['receiver', 'remap', 'config', 'tester', 'update'];
 function route() {
-  const target=location.hash.slice(1), anchor=document.getElementById(target);
-  const active=routes.includes(target)?target:['stickTests','sensorTests','outputTests','rateTests'].includes(target)?'tester':'tester';
+  const target=location.hash.slice(1);
+  const active=routes.includes(target)?target:'tester';
   for(const name of routes) $(name).hidden=name!==active;
-  for(const link of document.querySelectorAll('.sidebar nav a')){if(link.hash===`#${active}`)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');}
-  if(anchor&&!routes.includes(target))anchor.scrollIntoView({block:'start',behavior:'smooth'});else window.scrollTo(0,0);
+  for(const link of document.querySelectorAll('.site-nav a')){if(link.hash===`#${active}`)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');}
+  $(active==='tester'?'testConnection':'connectionHome').append($('connectionPanel'));
+  const legacy={stickTests:'input',sensorTests:'sense',outputTests:'rumble',rateTests:'device'};
+  if(legacy[target])tester.selectTab(legacy[target]);
+  window.scrollTo(0,0);
 }
 function refreshProfiles(){
  if(!$('profileStrip'))return;
@@ -239,8 +242,10 @@ for(let i=0;i<4;i++){const button=document.createElement('button');button.classN
 $('settings').addEventListener('input',refreshConfiguration);$('settings').addEventListener('change',refreshConfiguration);$('curveSpeed').oninput=$('curveMax').onchange=refreshConfiguration;
 $('curveExport').onclick=()=>{try{const c=formConfig(),rows=['hand_dps,mouse_x_counts_s,mouse_y_counts_s,stick_x,stick_y,mouse_x_ads,stick_x_ads'];for(let s=0;s<=Number($('curveMax').value);s++)rows.push([s,mouseSpeed(c,s,'x'),mouseSpeed(c,s,'y'),stickPosition(c,s,'x'),stickPosition(c,s,'y'),mouseSpeed(c,s,'x',true),stickPosition(c,s,'x',true)].join(','));download('ds5-mapping-curve.csv',rows.join('\n'),'text/csv');}catch(e){message(e.message,true);}};
 window.addEventListener('controller-button-picked',e=>{const bit=e.detail;if(bit<=18){location.hash='#remap';$('remapRows').children[bit]?.querySelector('select')?.focus();}else{location.hash='#config';$('buttons').querySelector(`[data-bit="${bit}"]`)?.focus();}});
+function themeLabel(){const dark=document.documentElement.dataset.theme==='dark';$('themeToggle').textContent=dark?'浅色':'深色';$('themeToggle').setAttribute('aria-label',dark?'切换浅色外观':'切换深色外观');}
 try{if(localStorage.getItem('ds5-theme')==='dark')document.documentElement.dataset.theme='dark';}catch{}
-$('themeToggle').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';try{localStorage.setItem('ds5-theme',dark?'dark':'light');}catch{}};
+themeLabel();
+$('themeToggle').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';themeLabel();try{localStorage.setItem('ds5-theme',dark?'dark':'light');}catch{}};
 window.addEventListener('hashchange',route);
 render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route(); initMouseTest(); refreshConfiguration();
 

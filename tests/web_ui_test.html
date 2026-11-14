@@ -1,16 +1,20 @@
-<!doctype html><meta charset="utf-8"><title>Gyro UI integration test</title>
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>网页自动回归测试 · 模拟设备</title>
+<style>body{font:15px/1.7 system-ui;margin:40px;color:#222}button,a{font:inherit;padding:9px 16px;display:inline-block;margin-right:10px}main{max-width:680px}</style>
+<main><h1>网页自动回归测试</h1><p>此页使用模拟设备，会自动切换配置、页面与连接状态，不操作真实手柄。刷新后不会自动运行。</p><button id="runUITest" type="button">运行模拟测试</button><a href="../web/#tester">打开控制中心</a></main>
 <script type="module">
 // Explicit fake HID device; no hardware is accessed. Serve the repository root.
 import { defaults, encodeConfig, decodeConfig, globalDefaults, encodeGlobal, decodeGlobal } from '../web/protocol.mjs';
 import {receiverDefaults,encodeReceiver,decodeReceiver,remapDefaults,encodeRemap,decodeRemap} from '../web/receiver-protocol.mjs';
+await new Promise(resolve=>document.getElementById('runUITest').addEventListener('click',resolve,{once:true}));
 let receiver=receiverDefaults(),remap=[remapDefaults(),remapDefaults()],remapRead=0,remapActive=0,legacyAck=[0,0,0,0],receiverSaves=0;
 let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 0, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
-const commands = [];
+const commands = [], outputs = [];
 class FakeDevice extends EventTarget {
   opened = false; productName = 'SIMULATED DS5 GYRO'; productId = 0x0DF2;
   collections = [{ featureReports: [0xFA, 0xFC, 0xFD, 0xFE].map(reportId => ({ reportId })) }];
   async open() { this.opened = true; }
   async close() { this.opened = false; }
+  async sendReport(id, bytes) { check(id===2&&bytes.length===47,'full-length output report'); outputs.push(bytes.slice()); }
   async sendFeatureReport(id, bytes) {
     if(id===0xF6||id===0xFB){
       check(bytes.length===(id===0xFB?127:63),'legacy full-length SET_REPORT');legacyAck=[bytes[0],0,bytes.at(-1),id];
@@ -46,12 +50,14 @@ const fake = new FakeDevice(), hid = new EventTarget(); hid.requestDevice = asyn
 Object.defineProperty(navigator, 'hid', { configurable: true, value: hid });
 const html = await (await fetch('../web/index.html')).text();
 const markup=html.replace('href="style.css','href="../web/style.css').replace(/<script type="module" src="app\.js(?:\?[^\"]*)?"><\/script>/,'');
-const parsed=new DOMParser().parseFromString(markup,'text/html');document.head.innerHTML=parsed.head.innerHTML;document.body.innerHTML=parsed.body.innerHTML;
+const parsed=new DOMParser().parseFromString(markup,'text/html');document.head.innerHTML=parsed.head.innerHTML;document.body.innerHTML=parsed.body.innerHTML;document.title='模拟设备 · 自动回归测试';
+const banner=document.createElement('aside');banner.id='testBanner';banner.style.cssText='position:fixed;top:0;right:0;z-index:100;background:#fff0bd;color:#503900;padding:6px 12px;font:12px system-ui';banner.append('模拟设备 · 自动回归测试 ');const exit=document.createElement('a');exit.href='../web/#tester';exit.textContent='退出测试，打开控制中心';banner.append(exit);document.body.append(banner);
 const $ = id => document.getElementById(id), result = document.createElement('pre'); result.id = 'testResults'; document.body.prepend(result);
-let assertions = 0;
-function check(condition, label) { if (!condition) throw new Error(label); assertions++; if(typeof result!=='undefined')result.textContent='RUNNING: '+label; }
+result.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:100;background:white;padding:8px;margin:0';
+let assertions = 0, finished=false;
+function check(condition, label) { if (!condition) throw new Error(label); assertions++; if(typeof result!=='undefined'&&!finished)result.textContent='RUNNING: '+label; }
 function change(id, value) { $(id).value = value; $(id).dispatchEvent(new Event('change', {bubbles:true})); }
-async function waitFor(predicate) { const deadline = performance.now() + 20000; while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); } }
+async function waitFor(predicate) { const deadline = performance.now() + 120000; while (!predicate()) { if (performance.now() > deadline) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); } }
 const ready = () => waitFor(() => !$('apply').disabled);
 try {
   await import('../web/app.js');
@@ -89,6 +95,18 @@ try {
   check(active === 0, 'imported default manual slot applied');
   location.hash = '#tester'; await waitFor(() => !$('tester').hidden);
   check($('config').hidden && $('update').hidden, 'tab routing');
+  const tabButtons=[...document.querySelectorAll('#testerTabs [role="tab"]')], tabPanes=[...document.querySelectorAll('.test-pane')];
+  check(tabButtons.length===6&&tabPanes.filter(p=>!p.hidden).length===1,'six test tabs with one visible panel');
+  const model=$('controllerVisual').getBoundingClientRect(), connection=$('connectionPanel').getBoundingClientRect(), panelHeight=document.querySelector('.test-panes').getBoundingClientRect().height, hash=location.hash;
+  for(const tab of tabButtons){tab.click();check(tab.getAttribute('aria-selected')==='true'&&tabPanes.filter(p=>!p.hidden).length===1,'test tab selects one panel');}
+  check(location.hash===hash,'test tabs do not navigate or scroll to anchors');
+  check(Math.abs($('controllerVisual').getBoundingClientRect().y-model.y)<1&&Math.abs($('connectionPanel').getBoundingClientRect().y-connection.y)<1&&Math.abs(document.querySelector('.test-panes').getBoundingClientRect().height-panelHeight)<1,'model, connection and panel height stay fixed across tabs');
+  $('test-tab-other').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));
+  check($('test-tab-input').getAttribute('aria-selected')==='true'&&document.activeElement===$('test-tab-input'),'tab keyboard navigation and focus');
+  $('test-tab-rumble').click();$('rumbleIntensity').value='25';$('rumbleBoth').click();await waitFor(()=>outputs.some(p=>p[2]>0&&p[3]>0));
+  $('test-tab-light').click();await waitFor(()=>outputs.at(-1)?.[0]===15);check(outputs.at(-1).slice(1).every(n=>n===0),'changing tabs stops motors and adaptive triggers');
+  $('test-tab-rumble').click();check($('rumbleIntensity').value==='25','tab switches preserve controls');
+  $('test-tab-input').click();
   await waitFor(() => $('factory').textContent === '已应用' && $('diagnostics').textContent.includes('接收报告'));
   check($('raw').textContent.includes('Edge 档位: 2'), 'telemetry rendered');
   statusFlags = 33; await waitFor(() => $('calibration').textContent === '校准超时');
@@ -104,6 +122,6 @@ try {
   hid.requestDevice = async () => ({ length: 1, 0: { ...fake, collections: [{ featureReports: [{ reportId: 0xFC }] }] } });
   $('connect').click(); await waitFor(() => !$('connect').disabled);
   check($('message').classList.contains('error') && !fake.opened, 'unsupported firmware rejected');
-  result.textContent = `PASS: ${assertions} assertions; fake WebHID device only`; result.style.color = '#258354';
-} catch (e) { result.textContent = `FAIL: ${e.stack}`; result.style.color = '#b42318'; }
+  finished=true; result.textContent = `PASS: ${assertions} assertions; fake WebHID device only`; result.style.color = '#258354';
+} catch (e) { finished=true; result.textContent = `FAIL: ${e.stack}`; result.style.color = '#b42318'; }
 </script>

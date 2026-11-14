@@ -53,6 +53,7 @@ export function initMouseTest() {
   });
   window.addEventListener('blur', end);
   window.addEventListener('hashchange', end);
+  window.addEventListener('tester-tab-change', end);
   document.addEventListener('visibilitychange', () => { if (document.hidden) end(); });
   reset();
 }

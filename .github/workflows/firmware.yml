@@ -103,7 +103,7 @@ jobs:
     uses: ./.github/workflows/control-center.yml
 
   release:
-    name: Draft tagged release
+    name: Publish tagged release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [tests, build, control-center]
     runs-on: ubuntu-22.04
@@ -111,6 +111,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: firmware-*
@@ -122,11 +125,31 @@ jobs:
           pattern: control-center-*
           path: dist
           merge-multiple: true
-      - name: Attach firmware and control center packages to a draft release
+      - name: Verify packages and publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" dist/*.zip --verify-tag --draft \
-            --title "$RELEASE_TAG" --generate-notes
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -name 'ds5dongle-*.zip' | wc -l)" -eq 6
+          for package in \
+            DS5-Control-Center-windows-amd64.zip \
+            DS5-Control-Center-macos-arm64.zip \
+            DS5-Control-Center-macos-x86_64.zip \
+            DS5-Control-Center-portable.zip; do
+            test -s "dist/$package"
+          done
+          (cd dist && sha256sum *.zip > SHA256SUMS)
+          cp docs/RELEASE_NOTES_CN.md "$RUNNER_TEMP/release-notes.md"
+          printf '\n源码提交：`%s`\n\n[GitHub Actions 构建记录](%s/%s/actions/runs/%s)\n' \
+            "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
+            >> "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS --verify-tag --draft \
+            --target "$GITHUB_SHA" --title "$RELEASE_TAG · DS5 控制中心" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+          fi

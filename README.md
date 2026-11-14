@@ -52,7 +52,7 @@ If the host does not supply power over USB, the board needs separate power via i
 
 The [Firmware workflow](.github/workflows/firmware.yml) runs host tests and builds all three boards in FS and HS modes on pushes, pull requests and manual runs. Open **Actions → Firmware → a successful run → Artifacts** and download `firmware-<board>-<speed>`. LCTech BL616 users should normally start with `firmware-lctech616-fs`.
 
-Each archive includes the firmware, Boot2, partition files, flash configuration, WebHID UI, dependency provenance and SHA256 checksums. Pushing a `v*` tag also creates a draft GitHub Release with all six packages. See [the CI guide](docs/CI_CN.md).
+Each archive includes the firmware, Boot2, partition files, flash configuration, WebHID UI, dependency provenance and SHA256 checksums. Pushing a `v*` tag publishes a GitHub Release after all six firmware and three desktop builds pass; tags containing a hyphen are published as prereleases. See [the CI guide](docs/CI_CN.md).
 
 ### 1. Bouffalo SDK (DS5Dongle fork — required)
 
@@ -119,7 +119,7 @@ bash build_macos.sh strip      # remove .o/.a to shrink build dir
 - **Default USB speed: Full-Speed (12 Mbps)**; pass `USB_SPEED=hs` to build the High-Speed variant (higher polling ceiling, more sensitive to cable quality).
 - Switching `BOARD_TYPE` or `USB_SPEED` triggers an automatic clean rebuild (CMake cache incompatible).
 
-Output: `firmware/{board}/ds5dongle-{board}.bin` (~800 KB) plus boot2/partition files and a `flash_prog_cfg.ini`. Binaries are git-ignored; CI distributes flashing packages through Actions Artifacts and draft Releases.
+Output: `firmware/{board}/ds5dongle-{board}.bin` (~800 KB) plus boot2/partition files and a `flash_prog_cfg.ini`. Binaries are git-ignored; CI distributes flashing packages through Actions Artifacts and Releases.
 
 #### Windows
 

@@ -18,7 +18,16 @@ export function initTester({getDevice,sendOutput,message}){
  $('triggerApply').onclick=()=>run(async()=>{const p=new Uint8Array(47);p[0]=12;for(const [name,o] of [['right',10],['left',21]]){const mode=Number($(name+'TriggerMode').value);p[o]=mode;if(mode){p[o+1]=number('triggerStart');p[o+2]=number('triggerForce');}}await output(p);message('扳机测试已应用，点击停止全部测试可解除');});
  $('lightApply').onclick=()=>run(async()=>{const p=new Uint8Array(47);p[1]=0x15;p[8]=Number($('muteLight').value);p[38]=1;p[42]=Number($('lightBrightness').value);p[43]=Number($('playerLights').value);const color=$('testColor').value;for(let i=0;i<3;i++)p[44+i]=parseInt(color.slice(1+2*i,3+2*i),16);await output(p);message('灯光测试已发送');});
  $('audioApply').onclick=()=>run(async()=>{const p=new Uint8Array(47);p[0]=0xF0;p[1]=2;p[4]=number('testHeadphone',0,127);p[5]=number('testSpeaker',0,127);p[6]=number('testMic',0,64);p[7]=Number($('audioRoute').value);p[9]=$('testMicMute').checked?0x10:0;await output(p);message('音量和音频路由测试已发送');});
+ const tabs=[...$('testerTabs').querySelectorAll('[role="tab"]')];let selected='input';
+ function selectTab(name,focus=false){
+  const next=tabs.find(t=>t.dataset.testTab===name);if(!next)return;
+  if(selected!==name){run(stop);selected=name;window.dispatchEvent(new CustomEvent('tester-tab-change',{detail:name}));}
+  for(const tab of tabs){const on=tab===next;tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;$(tab.getAttribute('aria-controls')).hidden=!on;}
+  if(focus)next.focus({preventScroll:true});
+  if($('test-pane-'+name).parentElement)$('test-pane-'+name).parentElement.scrollTop=0;
+ }
+ for(const tab of tabs){tab.onclick=()=>selectTab(tab.dataset.testTab);tab.onkeydown=e=>{const index=tabs.indexOf(tab);let next;if(e.key==='ArrowRight')next=(index+1)%tabs.length;else if(e.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=tabs.length-1;else return;e.preventDefault();selectTab(tabs[next].dataset.testTab,true);};}
  document.addEventListener('visibilitychange',()=>{if(document.hidden)run(stop);});window.addEventListener('pagehide',()=>run(stop));window.addEventListener('hashchange',()=>{if(!['#tester','#stickTests','#sensorTests','#outputTests','#rateTests'].includes(location.hash))run(stop);});
  drawStick('leftStickChart',0,0,0);drawStick('rightStickChart',0,0,1);
- return{updateInput,stop,reset(){const b=new Uint8Array(63);b.fill(128,0,4);b[7]=8;b[32]=b[36]=128;rateStart=0;trace=[[],[]];updateInput(b);$('battery').textContent='电量 —';$('controllerModel').textContent='DualSense / Edge';},stale:()=>!lastInput||performance.now()-lastInput>1500};
+ return{updateInput,stop,selectTab,reset(){const b=new Uint8Array(63);b.fill(128,0,4);b[7]=8;b[32]=b[36]=128;rateStart=0;trace=[[],[]];updateInput(b);$('battery').textContent='电量 —';$('controllerModel').textContent='DualSense / Edge';},stale:()=>!lastInput||performance.now()-lastInput>1500};
 }
