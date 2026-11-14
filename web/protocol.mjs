@@ -19,7 +19,7 @@ export const fields = [
   { id: 'accelStart', label: '加速开始 · °/s', group: 'motion', offset: 26, size: 2, min: 0, max: 1999, default: 30 },
   { id: 'accelEnd', label: '加速到顶 · °/s', group: 'motion', offset: 28, size: 2, min: 1, max: 2000, default: 180 },
   { id: 'maxTurn', label: '游戏满杆转速 · °/s', group: 'stick', offset: 18, size: 2, min: 1, max: 3000, default: 360 },
-  { id: 'stickDeadzone', label: '游戏摇杆死区 · %', group: 'stick', offset: 20, size: 2, scale: 10, min: 0, max: 50, step: .1, default: 10 },
+  { id: 'stickDeadzone', label: '游戏死区补偿 · %', group: 'stick', offset: 20, size: 2, scale: 10, min: 0, max: 50, step: .1, default: 10 },
   { id: 'stickPower', label: '游戏响应曲线 · 指数', group: 'stick', offset: 22, size: 2, scale: 100, min: .25, max: 4, step: .01, default: 1 },
   { id: 'blend', label: '物理右摇杆', group: 'stick', offset: 34, options: ['与体感叠加', '体感启用时替代'], default: 0 },
 ];

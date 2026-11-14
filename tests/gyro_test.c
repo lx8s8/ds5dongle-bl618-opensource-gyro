@@ -151,6 +151,47 @@ static void test_stick_and_drift(void)
     setup(); put16(c + 24, 200); put16(c + 26, 0); put16(c + 28, 100);
     assert(gyro_set_config(c, 40)); put16(p + 17, 1600); tick(1000, false); tick(10000, false); peek(2, 0);
 }
+static void test_stick_radial_response(void)
+{
+    setup(); c[1] = GYRO_RIGHT_STICK; c[34] = 1;
+    put16(c + 10, 400); put16(c + 12, 200); put16(c + 20, 100);
+    assert(gyro_set_config(c, 40));
+    put16(p + 15, -1600); put16(p + 17, 8); tick(1000, false);
+    /* Small horizontal cross-axis noise must not get a separate 10% kick. */
+    assert(out[2] >= 127 && out[2] <= 130); assert(out[3] > 180);
+    setup(); c[1] = GYRO_RIGHT_STICK; c[34] = 1;
+    put16(c + 18, 100); put16(c + 20, 100); assert(gyro_set_config(c, 40));
+    put16(p + 15, -1600); put16(p + 17, 1600); tick(1000, false);
+    float radius = hypotf(out[2] - 128.0f, out[3] - 128.0f);
+    assert(radius >= 126 && radius <= 128); /* diagonal stays on the circle */
+}
+static void test_stick_quiet_center(void)
+{
+    setup(); c[1] = GYRO_RIGHT_STICK; c[34] = 1; c[7] = 100;
+    put16(c + 16, 100); put16(c + 20, 100); assert(gyro_set_config(c, 40));
+    for (int i = 0; i < 200; i++) {
+        put16(p + 15, (i & 1) ? 12 : -12);
+        put16(p + 17, (i & 2) ? 16 : -16);
+        tick(1250, false);
+        assert(out[2] == 128 && out[3] == 128);
+    }
+    put16(p + 15, 0); put16(p + 17, 1600); tick(1250, false);
+    assert(out[2] > 128);
+    put16(p + 17, 0); tick(1250, false);
+    assert(out[2] == 128 && out[3] == 128); /* no amplified smoothing tail */
+}
+static void test_stick_reversal_and_inversion(void)
+{
+    for (int axis = 0; axis < 2; axis++) for (int inverted = 0; inverted < 2; inverted++) {
+        setup(); c[1] = GYRO_RIGHT_STICK; c[34] = 1; c[7] = 100;
+        c[6] = axis; c[5] = inverted ? GYRO_INVERT_X : 0;
+        put16(c + 18, 100); put16(c + 20, 100); assert(gyro_set_config(c, 40));
+        put16(p + (axis ? 19 : 17), 1600); tick(1250, false);
+        assert(inverted ? out[2] < 128 : out[2] > 128);
+        put16(p + (axis ? 19 : 17), -1600); tick(1250, false);
+        assert(inverted ? out[2] > 128 : out[2] < 128);
+    }
+}
 static void test_calibration(void)
 {
     setup(); uint8_t factory[40] = {0};
@@ -387,6 +428,9 @@ int main(void)
     puts("buttons"); test_buttons_and_suppression();
     puts("profile binding"); test_profile_binding();
     puts("stick"); test_stick_and_drift();
+    puts("stick radial response"); test_stick_radial_response();
+    puts("stick quiet center"); test_stick_quiet_center();
+    puts("stick reversal/inversion"); test_stick_reversal_and_inversion();
     puts("calibration"); test_calibration();
     puts("loss/validation"); test_gap_and_validation();
     puts("mouse merge"); test_usb_mouse_merge();
@@ -396,5 +440,5 @@ int main(void)
     puts("actions/debounce"); test_actions_and_slot_debounce();
     puts("control/metrics"); test_deferred_control_and_metrics();
     puts("calibration timeout/retry"); test_calibration_timeout_and_retry();
-    puts("gyro: 15 test groups passed"); return 0;
+    puts("gyro: 18 test groups passed"); return 0;
 }

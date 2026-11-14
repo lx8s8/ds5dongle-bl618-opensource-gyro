@@ -8,7 +8,7 @@ static struct gyro_config cfg;
 static struct {
     bool connected, active, held, qualified, latched, timestamp_valid, toggle_armed;
     bool factory, calibrating, calibrated, trigger_held, ads_held, paused;
-    bool cal_clock, cal_failed;
+    bool cal_clock, cal_failed, stick_moving;
     uint32_t cal_started;
     uint16_t fine_multiplier;
     uint32_t last_sensor, last_host, held_since, dt_us, packets, buttons;
@@ -74,6 +74,7 @@ void gyro_reset_stream(bool forget_calibration)
     motion.active = motion.held = motion.qualified = motion.latched = false;
     motion.toggle_armed = false;
     motion.trigger_held = motion.ads_held = false;
+    motion.stick_moving = false;
     motion.connected = motion.timestamp_valid = false;
     motion.selected_profile = 255;
     motion.dt_us = 0;
@@ -266,13 +267,18 @@ static void calibrate(const float rate[3], uint32_t dt)
     }
 }
 
-static float stick_value(float rate)
+static void stick_values(float output[2])
 {
-    float v = clamp(fabsf(rate) / cfg.max_turn_dps, 0, 1);
-    if (v == 0) return 0;
+    float magnitude = sqrtf(motion.filtered[0] * motion.filtered[0] +
+                            motion.filtered[1] * motion.filtered[1]);
+    output[0] = output[1] = 0;
+    if (magnitude == 0) return;
+    float v = clamp(magnitude / cfg.max_turn_dps, 0, 1);
     float deadzone = cfg.stick_deadzone / 1000.0f;
     v = deadzone + (1.0f - deadzone) * powf(v, 100.0f / cfg.stick_power);
-    return copysignf(v * 127.0f, rate);
+    /* Invert the game's radial response once, rather than adding the minimum
+     * deadzone output separately to both axes (which makes noise a square). */
+    for (int i = 0; i < 2; i++) output[i] = motion.filtered[i] / magnitude * v * 127.0f;
 }
 
 static void calibration_timeout(uint32_t now_us)
@@ -354,10 +360,16 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     float ramp = clamp((speed - cfg.accel_start_dps) /
                        (cfg.accel_end_dps - cfg.accel_start_dps), 0, 1);
     float acceleration = 1 + ramp * (cfg.accel_multiplier / 100.0f - 1);
-    float alpha = cfg.smoothing_ms ?
-        motion.dt_us / (motion.dt_us + cfg.smoothing_ms * 1000.0f) : 1;
     bool was_active = motion.active;
     motion.active = active;
+    bool stick_output = active && cfg.output == GYRO_RIGHT_STICK;
+    bool was_moving = motion.stick_moving;
+    /* A wider entry threshold avoids repeatedly lifting resting noise over the
+     * game's deadzone. Returning to quiet also discards the filter's tail. */
+    motion.stick_moving = stick_output && speed > noise * (was_moving ? 1.0f : 1.5f);
+    float smooth_us = cfg.smoothing_ms * 1000.0f;
+    if (stick_output) smooth_us /= 1 + 3 * clamp(speed / 90.0f, 0, 1);
+    float alpha = smooth_us ? motion.dt_us / (motion.dt_us + smooth_us) : 1;
     for (int i = 0; i < 2; i++) {
         float target = hand[i] * tighten * acceleration *
                        (i == 0 ? cfg.sensitivity_x : cfg.sensitivity_y) / 100.0f *
@@ -365,16 +377,23 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
                        (motion.fine_multiplier / 100.0f);
         /* Reset history on activation so the previous aiming session cannot
          * leak a tail into the next one. The first packet has no integration. */
-        if (!active) motion.filtered[i] = motion.pending[i] = 0;
-        else if (!was_active) motion.filtered[i] = target;
+        if (!active || (stick_output && !motion.stick_moving))
+            motion.filtered[i] = motion.pending[i] = 0;
+        else if (!was_active || (stick_output && !was_moving)) motion.filtered[i] = target;
+        else if (stick_output && target * motion.filtered[i] < 0 && fabsf(hand[i]) > noise * 1.5f)
+            motion.filtered[i] = alpha * target; /* no stale opposite-direction output */
         else motion.filtered[i] += alpha * (target - motion.filtered[i]);
         if (active && cfg.output == GYRO_MOUSE && motion.dt_us) {
             motion.pending[i] = clamp(motion.pending[i] + motion.filtered[i] *
                 (motion.dt_us / 1000000.0f) * (cfg.mouse_cpd / 100.0f), -2048, 2048);
         }
-        if (active && cfg.output == GYRO_RIGHT_STICK) {
+    }
+    float stick[2] = {0};
+    if (stick_output) stick_values(stick);
+    for (int i = 0; i < 2; i++) {
+        if (stick_output) {
             float base = cfg.stick_blend ? 128.0f : out[2 + i];
-            out[2 + i] = (uint8_t)clamp(roundf(base + stick_value(motion.filtered[i])), 0, 255);
+            out[2 + i] = (uint8_t)clamp(roundf(base + stick[i]), 0, 255);
         }
         motion.stick[i] = out[2 + i];
     }
