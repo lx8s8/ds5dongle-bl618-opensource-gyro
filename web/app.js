@@ -1,4 +1,5 @@
 import { CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT, REPORT_SIZE, buttonNames, fields, defaults, encodeConfig, decodeConfig, featureBytes, decodeStatus, globalDefaults, encodeGlobal, decodeProfiles, decodeDiagnostics, importBundle } from './protocol.mjs';
+import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
 
 const $ = id => document.getElementById(id);
 let device, busy = false, sequence = 0, live, samples = [], usbStick, metrics, diagnosticAt = 0, editSlot = 0, manualTouched = false;
@@ -139,6 +140,7 @@ async function close() {
   const previous = device; device = null; live = usbStick = metrics = null;
   if (previous) { previous.removeEventListener('inputreport', onInput); if (previous.opened) await previous.close(); }
   $('device').textContent = $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
+  $('testProfile').textContent = '配置 — · Edge —';
   ['interval', 'factory', 'calibration', 'stick'].forEach(id => { $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
 }
 $('disconnect').onclick = () => action(async () => { await close(); message('已断开连接'); });
@@ -180,6 +182,7 @@ function draw() {
   ['#2671d9', '#258354', '#ae6418'].forEach((color, axis) => { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); history.forEach((s, i) => { const x = i / 179 * w, y = h / 2 - s.rates[axis] / scale * (h / 2 - 25); if (!i) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); });
 }
 function renderLive(s) {
+  $('testProfile').textContent = `配置 ${metrics ? metrics.active < 4 ? metrics.active + 1 : '关闭' : '—'} · Edge ${s.edgeProfile || '—'}`;
   $('active').textContent = !(s.flags & 1) ? '等待输入' : s.flags & 4 ? '校准中' : s.flags & 2 ? '体感已开启' : '体感已关闭';
   $('interval').textContent = s.dt ? `${(s.dt / 1000).toFixed(2)} ms` : '—'; $('factory').textContent = s.flags & 16 ? '已应用' : '标称值';
   $('calibration').textContent = s.flags & 4 ? `${s.progress}%` : s.flags & 32 ? '校准超时' : s.flags & 8 ? '已校准' : '未校准'; $('stick').textContent = usbStick ? usbStick.join(' / ') : '等待输入'; $('rates').textContent = s.rates.map(n => n.toFixed(2)).join(' / ');
@@ -204,5 +207,5 @@ async function poll() {
 }
 function route() { const active = ['config', 'tester', 'update'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'config'; for (const name of ['config', 'tester', 'update']) $(name).hidden = name !== active; for (const link of document.querySelectorAll('nav a')) { if (link.hash === `#${active}`) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); } }
 window.addEventListener('hashchange', route);
-render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route();
+render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route(); initMouseTest();
 if (!navigator.hid) message('当前浏览器不支持，请使用 Chrome 或 Edge', true);

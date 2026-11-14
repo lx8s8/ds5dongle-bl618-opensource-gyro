@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BL616 接收器配置</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20261114-mouse1">
 </head>
 <body>
 <main>
@@ -45,13 +45,17 @@
   </section>
 
   <section id="tester" class="panel" hidden>
-    <div class="section-title"><h2>手柄测试</h2><span id="active" class="tag">等待输入</span></div>
+    <div class="section-title"><h2>手柄测试</h2><div class="test-status"><span id="testProfile" class="tag">配置 — · Edge —</span><span id="active" class="tag">等待输入</span></div></div>
     <div class="metrics"><div><small>采样间隔</small><strong id="interval">—</strong></div><div><small>工厂校准</small><strong id="factory">—</strong></div><div><small>零点校准</small><strong id="calibration">—</strong></div><div><small>右摇杆</small><strong id="stick">—</strong></div></div>
     <div class="plot-label"><span>角速度 °/s · <i class="pitch">X</i> / <i class="yaw">Y</i> / <i class="roll">Z</i></span><span id="rates">0 / 0 / 0</span></div>
     <canvas id="chart" width="1000" height="230" aria-label="陀螺仪角速度曲线"></canvas>
     <div class="checks"><button id="calibrate" disabled>静止校准</button><button id="clearCalibration" disabled>清除校准</button><button id="csv">导出数据</button></div>
     <p class="hint">请放稳手柄，保持静止 2 秒。重连后需重新校准。</p>
     <div class="live-buttons" id="liveButtons" aria-label="按键"></div>
+    <div class="subhead"><h3>鼠标测试</h3><span id="mouseState" class="tag" role="status">未开始</span></div>
+    <div class="actions"><button id="mouseStart" type="button">开始测试</button><button id="mouseStop" type="button" disabled>结束测试</button><button id="mouseReset" type="button">清除轨迹</button><span id="mouseCounts" class="hint">事件 0 · X 0 · Y 0</span></div>
+    <canvas id="mouseChart" width="1000" height="280" tabindex="0" aria-label="鼠标移动轨迹"></canvas>
+    <p class="hint">点击开始后转动手柄，按 Esc 退出。轨迹来自实际鼠标输入；测试时请勿移动其他鼠标或 VNC 指针。</p>
     <details><summary>传感器数据</summary><pre id="raw">等待输入</pre></details>
     <details><summary>运行统计</summary><pre id="diagnostics">等待输入</pre><button id="exportDiagnostics">导出诊断</button></details>
   </section>
@@ -62,6 +66,6 @@
     <p class="hint">选择对应开发板的固件包，解压后使用串口烧录。</p>
   </section>
 </main>
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=20261114-mouse2"></script>
 </body>
 </html>

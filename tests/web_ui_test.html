@@ -32,7 +32,7 @@ class FakeDevice extends EventTarget {
 const fake = new FakeDevice(), hid = new EventTarget(); hid.requestDevice = async () => [fake];
 Object.defineProperty(navigator, 'hid', { configurable: true, value: hid });
 const html = await (await fetch('../web/index.html')).text();
-document.open(); document.write(html.replace('href="style.css"', 'href="../web/style.css"').replace('<script type="module" src="app.js"></' + 'script>', '')); document.close();
+document.open(); document.write(html.replace('href="style.css', 'href="../web/style.css').replace(/<script type="module" src="app\.js(?:\?[^\"]*)?"><\/script>/, '')); document.close();
 const $ = id => document.getElementById(id), result = document.createElement('pre'); result.id = 'testResults'; document.body.prepend(result);
 let assertions = 0;
 function check(condition, label) { if (!condition) throw new Error(label); assertions++; }

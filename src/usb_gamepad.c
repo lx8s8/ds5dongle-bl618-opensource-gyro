@@ -26,14 +26,14 @@
 
 #if defined(BOARD_LCTECH_616)
   #ifdef FORCE_FS_MODE
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.1"
   #else
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2H"
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.1H"
   #endif
 #elif defined(BOARD_M0S_DOCK)
-#define FIRMWARE_VERSION "M0S-DS5 3.5G2"
+#define FIRMWARE_VERSION "M0S-DS5 3.5G2.1"
 #else
-#define FIRMWARE_VERSION "BL618-DS5 3.5G2"
+#define FIRMWARE_VERSION "BL618-DS5 3.5G2.1"
 #endif
 
 #define USBD_MAX_POWER      250
@@ -428,10 +428,6 @@ static uint8_t device_desc[] = {
 #define HID_SECTION_OFFSET          (AUDIO_DESC_OFFSET + USB_AUDIO_DESC_SIZE)  /* 195 */
 #define CONFIG_DESC_WDLEN_OFF       (HID_SECTION_OFFSET + 9 + 7)  /* 211: gamepad HID wDescriptorLength */
 #define BINTERVAL_GAMEPAD_EP_IN_OFF (HID_SECTION_OFFSET + 9 + 9 + 6) /* 219 */
-#define BINTERVAL_GAMEPAD_EP_OUT_OFF (BINTERVAL_GAMEPAD_EP_IN_OFF + 7) /* 226 */
-#define KBD_INTF_OFF  (BINTERVAL_GAMEPAD_EP_OUT_OFF + 1) /* 227: keyboard intf descriptor */
-#define KBD_SUBCLASS_OFF (KBD_INTF_OFF + 6)  /* bInterfaceSubClass in kbd intf */
-#define KBD_PROTOCOL_OFF (KBD_INTF_OFF + 7)  /* bInterfaceProtocol in kbd intf */
 
 static uint8_t config_desc[USB_HID_CONFIG_SIZE] = {
     /* Configuration Descriptor (9 bytes) */
@@ -448,9 +444,9 @@ static uint8_t config_desc[USB_HID_CONFIG_SIZE] = {
 #define AUDIO_PLACEHOLDER_BYTES 186
     [AUDIO_DESC_OFFSET ... AUDIO_DESC_OFFSET + AUDIO_PLACEHOLDER_BYTES - 1] = 0,
 
-    /* ---- Interface 2: DualSense Gamepad ---- */
+    /* ---- Interface 3: DualSense Gamepad ---- */
     0x09, 0x04,
-    USB_INTF_GAMEPAD,        /* bInterfaceNumber: 2 */
+    USB_INTF_GAMEPAD,        /* bInterfaceNumber: 3 */
     0x00,                    /* bAlternateSetting */
     0x01,                    /* bNumEndpoints: IN only (OUT via EP0 SET_REPORT) */
     0x03,                    /* bInterfaceClass: HID */
@@ -473,14 +469,14 @@ static uint8_t config_desc[USB_HID_CONFIG_SIZE] = {
     USB_GAMEPAD_EP_MPS, 0x00,
     USB_GAMEPAD_INTERVAL_MS,
 
-    /* ---- Interface 4: Keyboard (PS shortcut / remap / wake key) ---- */
+    /* ---- Interface 4: Keyboard + consumer control + mouse ---- */
     0x09, 0x04,
     USB_INTF_KBD,            /* bInterfaceNumber: 4 */
     0x00,                    /* bAlternateSetting */
     0x01,                    /* bNumEndpoints: IN only */
     0x03,                    /* bInterfaceClass: HID */
-    0x01,                    /* bInterfaceSubClass: Boot Interface Subclass */
-    0x01,                    /* bInterfaceProtocol: Keyboard — forces kbdhid.sys on Windows */
+    0x00,                    /* bInterfaceSubClass: multi-collection HID */
+    0x00,                    /* bInterfaceProtocol: report protocol */
     0x00,                    /* iInterface */
 
     /* HID Descriptor (Keyboard) */
@@ -816,8 +812,6 @@ int usb_gamepad_init(usb_gamepad_output_cb_t output_cb)
         remap_has_kbd_targets() || config_get()->ps_shortcut_enabled ||
         config_get()->tp_mode == 2 || config_get()->tp_mode == 3;
     if (need_kbd) {
-        config_desc[KBD_SUBCLASS_OFF] = 0x00; /* No subclass (multi-TLC, not pure boot) */
-        config_desc[KBD_PROTOCOL_OFF] = 0x00; /* None — keyboard + consumer control */
         LOG_INF("[USB-INIT] Keyboard+CC intf: INCLUDED\n");
         config_desc[7] = need_remote_wake ? 0xE0 : 0xC0;
         /* wTotalLength and bNumInterfaces stay at compiled-in max */
@@ -962,7 +956,6 @@ void usb_gamepad_set_polling_rate(uint8_t mode)
     }
 #endif
     config_desc[BINTERVAL_GAMEPAD_EP_IN_OFF]  = interval;
-    config_desc[BINTERVAL_GAMEPAD_EP_OUT_OFF] = interval;
     LOG_INF("[USB] Polling rate: mode=%d bInterval=%d\n", mode, interval);
 }
 
