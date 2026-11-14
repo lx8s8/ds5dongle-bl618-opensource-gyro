@@ -48,6 +48,8 @@ GND              → USB GND（黑色）
 
 ## 快速开始
 
+Apple Silicon Mac 本地开发可运行 `bash scripts/setup_macos.sh` 准备环境，然后执行 `bash scripts/build_local.sh build` 增量编译，或用 `package` 生成刷机包。详见 [本地编译说明](docs/LOCAL_BUILD_CN.md)。
+
 ### GitHub 自动编译（无需本地安装 SDK）
 
 仓库内的 [Firmware 工作流](.github/workflows/firmware.yml) 会在推送、Pull Request 和手动运行时，测试并构建三种板型 × FS/HS 六个版本。进入 GitHub 仓库 **Actions → Firmware → 成功的运行 → Artifacts**，下载对应的 `firmware-板型-速度`，解压其中的刷机 ZIP。LCTech BL616 通常选择 `firmware-lctech616-fs`。

@@ -29,6 +29,27 @@ def compiler_version():
     ).splitlines()[0]
 
 
+def git_dirty(directory):
+    # gen_bin rewrites these convenience configs for the selected USB speed.
+    # Packages generate their own config and never consume those output files.
+    return bool(subprocess.check_output(
+        ["git", "-C", str(directory), "status", "--porcelain", "--untracked-files=normal",
+         "--", ".", ":(exclude)firmware/*/flash_prog_cfg.ini"],
+        text=True,
+    ).strip())
+
+
+def toolchain_provenance(pins, compiler):
+    if "V2.10.2 macOS-arm64" in compiler:
+        prefix = "MACOS_ARM64_"
+    elif "V2.6.1" in compiler:
+        prefix = ""
+    else:
+        # Do not attribute a custom compiler to the pinned CI archive.
+        return None, None
+    return pins[prefix + "TOOLCHAIN_URL"], pins[prefix + "TOOLCHAIN_SHA256"]
+
+
 def dependency_pins(root):
     return dict(
         line.split("=", 1)
@@ -73,7 +94,10 @@ def build_package(root, board, usb, sdk_root, output):
     if sdk_commit != pins["SDK_REF"]:
         raise ValueError("SDK commit differs from .github/ci/dependencies.env")
 
-    package_name = f"ds5dongle-{board}-{usb}-{commit[:8]}"
+    dirty = git_dirty(root)
+    compiler = compiler_version()
+    toolchain_url, toolchain_digest = toolchain_provenance(pins, compiler)
+    package_name = f"ds5dongle-{board}-{usb}-{commit[:8]}{'-dirty' if dirty else ''}"
     binary_name = f"ds5dongle-{board}{'-hs' if usb == 'hs' else ''}.bin"
     output.mkdir(parents=True, exist_ok=True)
     archive = output / f"{package_name}.zip"
@@ -106,11 +130,13 @@ def build_package(root, board, usb, sdk_root, output):
             "board": board,
             "usb_speed": usb,
             "source_commit": commit,
+            "source_dirty": dirty,
             "sdk_repository": pins["SDK_REPOSITORY"],
             "sdk_commit": sdk_commit,
-            "toolchain_url": pins["TOOLCHAIN_URL"],
-            "toolchain_archive_sha256": pins["TOOLCHAIN_SHA256"],
-            "compiler": compiler_version(),
+            "sdk_dirty": git_dirty(sdk_root),
+            "toolchain_url": toolchain_url,
+            "toolchain_archive_sha256": toolchain_digest,
+            "compiler": compiler,
             "built_at_utc": datetime.now(timezone.utc).isoformat(),
             "partition_table": PARTITION_TABLE,
             "hardware_validated": False,

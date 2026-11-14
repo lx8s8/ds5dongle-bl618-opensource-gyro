@@ -46,6 +46,8 @@ git push origin v3.18-gyro.1
 
 ## 固定依赖与本地复现
 
+Apple Silicon Mac 的原生编译、增量缓存和打包入口见 [本地编译说明](LOCAL_BUILD_CN.md)。macOS 工具链单独固定为 v2.10.2；Linux CI 的 v2.6.1 保持不变，包内元数据按实际编译器区分。
+
 [dependencies.env](../.github/ci/dependencies.env) 固定 SDK 仓库与完整提交号，以及 Linux x86_64 的 XuanTie v2.6.1 下载地址和 SHA256。工具链下载后先校验再解压，缓存按 SHA256 区分。固件 v3.18 使用旧版 T-Head DSP 指令，升级编译器需要单独验证，不能直接换成普通 RISC-V GCC。
 
 在 Linux x86_64 上安装 GNU Make 4+、CMake、GCC、Python 3、Node.js、curl 和 xz，再执行：

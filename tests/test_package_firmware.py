@@ -50,6 +50,9 @@ class FirmwarePackageTests(unittest.TestCase):
         compiler = patch.object(pack, "compiler_version", return_value="T-Head GCC test")
         compiler.start()
         self.addCleanup(compiler.stop)
+        dirty = patch.object(pack, "git_dirty", return_value=False)
+        dirty.start()
+        self.addCleanup(dirty.stop)
 
     def package(self, board="lctech616", usb="fs"):
         return pack.build_package(self.root, board, usb, self.sdk, self.root / "dist")
@@ -68,6 +71,7 @@ class FirmwarePackageTests(unittest.TestCase):
         self.assertEqual(info["sdk_commit"], self.sdk_commit)
         self.assertEqual(info["source_commit"], "a" * 40)
         self.assertFalse(info["hardware_validated"])
+        self.assertFalse(info["source_dirty"])
         checksums = contents["SHA256SUMS"].decode().splitlines()
         self.assertEqual(len(checksums), len(contents) - 1)
         for line in checksums:
@@ -80,6 +84,36 @@ class FirmwarePackageTests(unittest.TestCase):
                 (self.root / "build/.board_type").write_text(f"{board}-hs\n")
                 with zipfile.ZipFile(self.package(board, "hs")) as archive:
                     self.assertTrue(any(name.endswith(f"ds5dongle-{board}-hs.bin") for name in archive.namelist()))
+
+    def test_native_compiler_uses_its_own_archive_pin(self):
+        compiler = "riscv64-unknown-elf-gcc (XuanTie GNU Toolchain V2.10.2 macOS-arm64 rv32+rv64) 10.4.0"
+        with patch.object(pack, "compiler_version", return_value=compiler):
+            with zipfile.ZipFile(self.package()) as archive:
+                info = json.loads(archive.read("ds5dongle-lctech616-fs-aaaaaaaa/build-info.json"))
+        pins = pack.dependency_pins(self.root)
+        self.assertEqual(info["toolchain_archive_sha256"], pins["MACOS_ARM64_TOOLCHAIN_SHA256"])
+        self.assertEqual(info["toolchain_url"], pins["MACOS_ARM64_TOOLCHAIN_URL"])
+
+    def test_unknown_compiler_does_not_claim_ci_archive(self):
+        with zipfile.ZipFile(self.package()) as archive:
+            info = json.loads(archive.read("ds5dongle-lctech616-fs-aaaaaaaa/build-info.json"))
+        self.assertIsNone(info["toolchain_archive_sha256"])
+        self.assertIsNone(info["toolchain_url"])
+
+    def test_ci_compiler_keeps_linux_archive_pin(self):
+        compiler = "riscv64-unknown-elf-gcc (Xuantie-900 elf newlib gcc Toolchain V2.6.1 B-20220906) 10.2.0"
+        pins = pack.dependency_pins(self.root)
+        self.assertEqual(pack.toolchain_provenance(pins, compiler),
+                         (pins["TOOLCHAIN_URL"], pins["TOOLCHAIN_SHA256"]))
+
+    def test_uncommitted_build_is_marked_and_has_distinct_filename(self):
+        with patch.object(pack, "git_dirty", side_effect=lambda path: path == self.root):
+            archive_path = self.package()
+        self.assertIn("-dirty.zip", archive_path.name)
+        with zipfile.ZipFile(archive_path) as archive:
+            info = json.loads(archive.read("ds5dongle-lctech616-fs-aaaaaaaa-dirty/build-info.json"))
+        self.assertTrue(info["source_dirty"])
+        self.assertFalse(info["sdk_dirty"])
 
     def test_rejects_wrong_board_or_speed(self):
         with self.assertRaisesRegex(ValueError, "requested"):

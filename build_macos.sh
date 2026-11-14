@@ -58,6 +58,15 @@ fi
 TOOLCHAIN_PREFIX=""
 
 find_toolchain() {
+    if [[ -n "${TOOLCHAIN_BIN:-}" ]]; then
+        if [[ ! -x "${TOOLCHAIN_BIN}/riscv64-unknown-elf-gcc" ]]; then
+            echo "ERROR: compiler missing from TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >&2
+            return 1
+        fi
+        export PATH="${TOOLCHAIN_BIN}:${PATH}"
+        TOOLCHAIN_PREFIX="riscv64-unknown-elf-"
+        return 0
+    fi
     local search_dirs=(
         "$HOME/riscv-toolchain/toolchain/bin"
         "/opt/riscv-toolchain/bin"
@@ -136,6 +145,7 @@ fi
 # ── 清理中间文件（保留最终固件） ──
 strip_intermediates() {
     echo "[build] Stripping intermediate files..."
+    rm -f build/.incremental-state
     find build/build_out/components build/build_out/drivers \( -name "*.obj" -o -name "*.o" \) -delete 2>/dev/null || true
     rm -rf build/build_out/lib/*.a
     rm -rf build/build_out/components/*/CMakeFiles
@@ -219,8 +229,66 @@ do_output() {
     gen_bin
 }
 
+# The SDK normally recreates generated headers on every make invocation.
+# Retain that configure path for CI and changed build configurations.
+do_incremental() {
+    local state previous="" state_file="build/.incremental-state"
+    local image_stamp="build/.incremental-image" image_state=""
+    state=$({
+        printf '%s\n' "$BUILD_KEY" "$BL_SDK_BASE" "$TOOLCHAIN_PREFIX" "$(command -v "${TOOLCHAIN_PREFIX}gcc")"
+        "${TOOLCHAIN_PREFIX}gcc" --version
+        "${CMAKE_CMD:-cmake}" --version
+        "$MAKE_CMD" --version
+        git -C "$BL_SDK_BASE" rev-parse HEAD
+        git -C "$BL_SDK_BASE" diff --binary HEAD -- .
+        env | LC_ALL=C sort | sed -n '/^CONFIG_/p; /^CFLAGS=/p; /^CXXFLAGS=/p; /^LDFLAGS=/p'
+        for input in Makefile CMakeLists.txt defconfig proj.conf lib/opus.cmake build_macos.sh .config .config.cmake firmware/lctech616/partition_cfg_4M_nosec.toml; do
+            if [[ -f "$input" ]]; then shasum -a 256 "$input"; fi
+        done
+    } | shasum -a 256 | cut -d' ' -f1)
+    if [[ -f "$state_file" ]]; then previous=$(cat "$state_file"); fi
+    rm -f "$state_file"
+    if [[ "$state" == "$previous" && -f build/Makefile && -f build/CMakeCache.txt ]]; then
+        echo "[build] Reusing configured build and object files"
+        "${CMAKE_CMD:-cmake}" --build build --parallel "$NPROC"
+        if [[ -f "$image_stamp" ]] && image_state=$(current_image_state) &&
+           [[ "$image_state" == "$(cat "$image_stamp")" ]]; then
+            echo "[build] Image unchanged; reusing verified post-processing output"
+        else
+            # post_build and combine modify BIN in place. Restore the raw
+            # ELF image first to avoid appending data twice after a rebuild.
+            "${TOOLCHAIN_PREFIX}objcopy" -Obinary build/build_out/ds5dongle_bl618_bl616.elf "$BIN_PATH"
+            "${CMAKE_CMD:-cmake}" --build build --target post_build
+            "${CMAKE_CMD:-cmake}" --build build --target combine
+        fi
+    else
+        echo "[build] Configuring build (first run or changed dependencies/config)"
+        if [[ -n "$previous" ]]; then
+            ${MAKE_CMD} "${MAKE_ARGS[@]}" clean
+        fi
+        do_build
+    fi
+    current_image_state > "$image_stamp"
+    printf '%s\n' "$state" > "$state_file"
+}
+
+current_image_state() {
+    local image
+    for image in build/build_out/ds5dongle_bl618_bl616.elf "$BIN_PATH" \
+                 build/build_out/partition.bin build/build_out/boot2_*.bin; do
+        [[ -f "$image" ]] || return 1
+        shasum -a 256 "$image" || return 1
+    done
+}
+
 case "$ACTION" in
+    incremental)
+        do_incremental
+        do_output
+        echo "[build] Done (${BOARD_TYPE}, usb=${USB_SPEED}). Output: ${OUT_DIR}/"
+        ;;
     build)
+        rm -f build/.incremental-state
         do_build
         do_output
         echo ""
@@ -246,9 +314,10 @@ case "$ACTION" in
         strip_intermediates
         ;;
     *)
-        echo "Usage: [BOARD_TYPE=...] [USB_SPEED=hs|fs] ./build_macos.sh [build|clean|flash|rebuild|strip]"
+        echo "Usage: [BOARD_TYPE=...] [USB_SPEED=hs|fs] ./build_macos.sh [build|incremental|clean|flash|rebuild|strip]"
         echo ""
         echo "  build   - 编译项目（默认）"
+        echo "  incremental - 配置未变时复用 CMake 和目标文件"
         echo "  clean   - 清除构建产物"
         echo "  flash   - 烧录固件 (可选: ./build_macos.sh flash /dev/tty.usbserial-xxx)"
         echo "  rebuild - 清除后重新编译"
