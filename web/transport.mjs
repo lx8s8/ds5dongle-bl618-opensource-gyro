@@ -1,3 +1,16 @@
+// Reuse an existing grant only after the user clicks Connect. Multiple valid
+// receivers still require a choice; do not silently pick the first device.
+export async function requestReceiver(hid) {
+  const filters=[{vendorId:0x054C,productId:0x0CE6,usagePage:1,usage:5},
+    {vendorId:0x054C,productId:0x0DF2,usagePage:1,usage:5},
+    {vendorId:0x1209,productId:0x0001,usagePage:1,usage:5}];
+  const authorized=hid.getDevices ? await hid.getDevices() : [];
+  const receivers=authorized.filter(device=>filters.some(f=>device.vendorId===f.vendorId&&device.productId===f.productId)&&
+    [0xFA,0xFC,0xFD,0xFE].every(id=>device.collections.some(c=>(c.featureReports||[]).some(r=>r.reportId===id))));
+  if(receivers.length===1) return receivers[0];
+  return (await hid.requestDevice({filters}))[0];
+}
+
 // One queue owns Feature traffic, including telemetry and legacy commands.
 export class HidTransport {
   constructor(device) { this.device = device; this.sequence = 0; this.tail = Promise.resolve(); this.closed = false; }

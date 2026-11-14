@@ -15,6 +15,7 @@
 #include "usbd_hid.h"
 #include "bl616_glb.h"
 #include "bflb_efuse.h"
+#include "bflb_irq.h"
 #include "bflb_mtimer.h"
 #include "board.h"
 #include <string.h>
@@ -974,9 +975,14 @@ void usb_gamepad_set_polling_rate(uint8_t mode)
 ATTR_TCM_SECTION
 int usb_gamepad_send_raw_input(const uint8_t *payload)
 {
+    /* The completion IRQ also copies pending_payload and starts this endpoint.
+     * Keep publishing and starting a frame indivisible: volatile alone cannot
+     * prevent a half-old frame or an in-flight DMA buffer being overwritten. */
+    uintptr_t irq_state = bflb_irq_save();
     memcpy((void *)pending_payload, payload, DS5_USB_INPUT_PAYLOAD_LEN);
     pending_active = true;
     try_send_pending();
+    bflb_irq_restore(irq_state);
     return 0;
 }
 

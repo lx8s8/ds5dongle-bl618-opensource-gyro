@@ -1,16 +1,19 @@
 import { CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT, REPORT_SIZE, buttonNames, fields, defaults, encodeConfig, decodeConfig, featureBytes, decodeStatus, globalDefaults, encodeGlobal, decodeProfiles, decodeDiagnostics, importBundle } from './protocol.mjs';
 import { initLocalApp } from './local-app.mjs';
-import { HidTransport } from './transport.mjs';
+import { HidTransport, requestReceiver } from './transport.mjs';
 import { initReceiverUI } from './receiver-ui.mjs';
 import { initTester } from './tester.mjs';
 import { initReleases } from './releases.mjs';
 import { mouseSpeed, stickPosition } from './mapping-model.mjs';
 import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
+import { DiagnosticCapture } from './diagnostic-capture.mjs';
 
 const $ = id => document.getElementById(id);
 let transport, receiverUI, tester;
 let device, busy = false, sequence = 0, live, samples = [], usbStick, metrics, diagnosticAt = 0, editSlot = 0, manualTouched = false;
 let drafts = Array.from({ length: 4 }, defaults);
+let reportedProfiles = [];
+const capture = new DiagnosticCapture();
 const deviceButtons = ['apply', 'save', 'read', 'defaults', 'calibrate', 'clearCalibration', 'disconnect', 'activateSlot'];
 const actionNames = ['未设置', '下一配置', '上一配置', '指定配置', '体感开关', '静止校准', '按住精瞄'];
 function select(options) { const el = document.createElement('select'); options.forEach(([value, text]) => el.add(new Option(text, value))); return el; }
@@ -114,23 +117,24 @@ function currentSlot(n) { activeSlot = n; $('currentSlot').textContent = n < 4 ?
 async function command(cmd, value) {
   if (!device?.opened) throw new Error('请先连接接收器');
   const result = await transport.gyro(cmd, value ? cmd === 1 ? encodeConfig(value) : value : []);
-  currentSlot(result[45]); return decodeConfig(result);
+  currentSlot(result[45]); const config=decodeConfig(result);
+  reportedProfiles[result[44]]=config; return config;
 }
 async function readAll() {
   const info = decodeProfiles(await receive(PROFILE_REPORT)); renderGlobal(info.settings); editSlot = info.edit;
   for (let i = 0; i < 4; i++) drafts[i] = await command(6, [i]);
   await command(6, [editSlot]); $('editSlot').value = editSlot; render(drafts[editSlot]); currentSlot(info.active);
 }
-function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) { usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; tester.updateInput(new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength)); } }
+function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) { usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; const bytes=new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength); capture.input(bytes); tester.updateInput(bytes); } }
 $('connect').onclick = () => action(async () => {
-  const chosen = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x054C, productId: 0x0CE6, usagePage: 1, usage: 5 }, { vendorId: 0x054C, productId: 0x0DF2, usagePage: 1, usage: 5 }, { vendorId: 0x1209, productId: 0x0001, usagePage: 1, usage: 5 }] });
-  if (!chosen.length) return;
-  const candidate = chosen[0], reports = candidate.collections.flatMap(c => c.featureReports || []);
+  const candidate=await requestReceiver(navigator.hid);
+  if (!candidate) return;
+  const reports = candidate.collections.flatMap(c => c.featureReports || []);
   if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('请选择接收器，并更新至支持体感配置的固件');
   await candidate.open(); device = candidate; transport = new HidTransport(candidate);
   try {
-    const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(); await receiverUI.load(); device.addEventListener('inputreport', onInput);
-    $('device').textContent = candidate.productName; $('connectionDot').classList.add('on'); samples = []; usbStick = metrics = null; diagnosticAt = 0;
+    reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(); await receiverUI.load(); device.addEventListener('inputreport', onInput);
+    $('device').textContent = candidate.productName; $('connectionDot').classList.add('on'); samples = []; usbStick = metrics = null; diagnosticAt = 0; capture.reset();
     try { const version = await transport.read(0xF8, null); $('firmware').textContent = new TextDecoder().decode(version).replace(/\0.*$/s, ''); }
     catch { $('firmware').textContent = '读取失败'; }
     $('controllerModel').textContent = candidate.productName; message('连接成功');
@@ -175,7 +179,7 @@ $('import').onchange = e => action(async () => {
   const bundle = importBundle(JSON.parse(await file.text())); drafts = bundle.profiles; renderGlobal(bundle.settings); manualTouched = true; render(drafts[editSlot]); e.target.value = ''; message('已导入配置，请保存到设备');
 });
 $('csv').onclick = () => { const rows = ['time_ms,dt_us,flags,pitch_dps,yaw_dps,roll_dps,filtered_x_dps,filtered_y_dps,stick_x,stick_y,buttons,edge_profile,dongle_profile', ...samples.map(s => [s.time, s.dt, s.flags, ...s.rates, ...s.filtered, ...s.stick, s.buttons, s.edgeProfile, s.dongleProfile].join(','))]; download('ds5-gyro-debug.csv', rows.join('\n'), 'text/csv'); };
-$('exportDiagnostics').onclick = () => { if (!metrics) return message('暂无诊断数据', true); download('ds5-gyro-diagnostics.json', JSON.stringify({ version: 2, firmware: $('firmware').textContent, time: new Date().toISOString(), metrics }, null, 2), 'application/json'); };
+$('exportDiagnostics').onclick = () => { if (!metrics) return message('暂无诊断数据', true); download('ds5-gyro-diagnostics.json', JSON.stringify({ version: 3, firmware: $('firmware').textContent, time: new Date().toISOString(), metrics, reportedProfiles, featureSamples:samples, capture:capture.snapshot() }), 'application/json'); };
 function draw() {
   const canvas = $('chart'), ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h); const history = samples.slice(-180), scale = Math.max(30, ...history.flatMap(s => s.rates.map(Math.abs)));
@@ -236,7 +240,7 @@ function refreshConfiguration(){
  }catch(e){$('curveOutput').textContent='请检查参数';}
 }
 receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
-tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message});
+tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);}});
 initReleases();
 for(let i=0;i<4;i++){const button=document.createElement('button');button.className='profile-chip';button.type='button';const title=document.createElement('strong');title.textContent='配置 '+(i+1);button.append(title,document.createElement('span'));button.onclick=()=>{ $('editSlot').value=i;$('editSlot').dispatchEvent(new Event('change'));};$('profileStrip').append(button);}
 $('settings').addEventListener('input',refreshConfiguration);$('settings').addEventListener('change',refreshConfiguration);$('curveSpeed').oninput=$('curveMax').onchange=refreshConfiguration;

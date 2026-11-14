@@ -71,7 +71,7 @@
 <div class="checks"><label><input id="tiltPreview" type="checkbox"> 重力方向预览</label></div>    <div class="metrics"><div><small>采样间隔</small><strong id="interval">—</strong></div><div><small>工厂校准</small><strong id="factory">—</strong></div><div><small>零点校准</small><strong id="calibration">—</strong></div><div><small>右摇杆</small><strong id="stick">—</strong></div></div>
     <div class="plot-label"><span>角速度 °/s · <i class="pitch">X</i> / <i class="yaw">Y</i> / <i class="roll">Z</i></span><span id="rates">0 / 0 / 0</span></div>
     <canvas id="chart" width="1000" height="230" aria-label="陀螺仪角速度曲线"></canvas>
-    <div class="checks"><button id="calibrate" disabled>静止校准</button><button id="clearCalibration" disabled>清除校准</button><button id="csv">导出数据</button></div>
+    <div class="checks"><button id="calibrate" disabled>静止校准</button><button id="clearCalibration" disabled>清除校准</button><button id="csv">导出数据</button><button id="exportDiagnostics">导出诊断</button></div>
     <p class="hint">请放稳手柄，保持静止 2 秒。重连后需重新校准。</p>
 </div>
 <div id="test-pane-light" class="test-pane" role="tabpanel" aria-labelledby="test-tab-light" tabindex="0" hidden><h4>手柄灯光</h4><div class="grid"><label class="field">颜色<input id="testColor" type="color" value="#21a68b"></label><label class="field">亮度<select id="lightBrightness"><option value="0">高</option><option value="1">中</option><option value="2">低</option></select></label><label class="field">玩家灯<select id="playerLights"><option value="0">关闭</option><option value="4">1</option><option value="10">2</option><option value="21">3</option><option value="27">4</option><option value="31">全部</option></select></label><label class="field">麦克风灯<select id="muteLight"><option value="0">关闭</option><option value="1">常亮</option><option value="2">闪烁</option></select></label></div><button id="lightApply" class="requires-device">应用灯光测试</button><h4>音量与路由</h4><div class="grid"><label class="field">耳机音量<input id="testHeadphone" type="number" min="0" max="127" value="80"></label><label class="field">扬声器音量<input id="testSpeaker" type="number" min="0" max="127" value="60"></label><label class="field">麦克风音量<input id="testMic" type="number" min="0" max="64" value="40"></label><label class="field">音频出口<select id="audioRoute"><option value="49">耳机</option><option value="0">扬声器</option></select></label></div><label class="toggle-field">麦克风静音<input id="testMicMute" type="checkbox"></label><button id="audioApply" class="requires-device">应用音频测试</button><p id="headset" class="hint">耳机状态 —</p></div>
@@ -83,7 +83,7 @@
     <canvas id="mouseChart" width="1000" height="280" tabindex="0" aria-label="鼠标移动轨迹"></canvas>
     <p class="hint">点击开始后转动手柄，按 Esc 退出。轨迹来自实际鼠标输入；测试时请勿移动其他鼠标或 VNC 指针。</p>
     <details><summary>传感器数据</summary><pre id="raw">等待输入</pre></details>
-    <details><summary>运行统计</summary><pre id="diagnostics">等待输入</pre><button id="exportDiagnostics">导出诊断</button></details>
+    <details><summary>运行统计</summary><pre id="diagnostics">等待输入</pre></details>
 </div></div>
         </div>
       </div>
