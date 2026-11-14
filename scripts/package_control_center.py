@@ -22,6 +22,8 @@ def package_source(output):
         for n in ['启动控制中心.command', '启动控制中心.cmd', 'LICENSE', 'NOTICE']:
             shutil.copy2(ROOT / n, root / n)
         shutil.copy2(ROOT / 'docs/CONTROL_CENTER_CN.md', root / '使用说明.md')
+        for name in ['DUAL_FIRMWARE_CN.md', 'GYRO_AXIS_ANALYSIS_CN.md']:
+            shutil.copy2(ROOT / 'docs' / name, root / name)
         output.mkdir(parents=True, exist_ok=True)
         return shutil.make_archive(str(output / 'DS5-Control-Center-source'), 'zip', tmp)
 
@@ -55,6 +57,8 @@ def freeze(output):
     for n in ['LICENSE', 'NOTICE']:
         shutil.copy2(ROOT / n, license_dir / n)
     shutil.copy2(ROOT / 'docs/CONTROL_CENTER_CN.md', license_dir / '使用说明.md')
+    for name in ['DUAL_FIRMWARE_CN.md', 'GYRO_AXIS_ANALYSIS_CN.md']:
+        shutil.copy2(ROOT / 'docs' / name, license_dir / name)
     # Rust standard library is linked into the executable; include its licenses.
     for n in ['LICENSE-MIT', 'LICENSE-APACHE']:
         shutil.copy2(ROOT / 'desktop/native/licenses' / n, license_dir / ('RUST-' + n))

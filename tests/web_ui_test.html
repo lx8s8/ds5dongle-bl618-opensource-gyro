@@ -64,6 +64,7 @@ try {
   check($('apply').disabled && $('connect').textContent === '连接接收器', 'initial state');
   check(document.querySelector('h1').textContent === 'DS5 控制中心', 'concise product title');
   check($('editSlot').options.length === 4 && $('profiles').hidden, 'four independent slots');
+  check($('bootSlot0').disabled&&$('bootSlot1').disabled&&$('bootState').textContent.includes('未连接'),'unconnected boot manager cannot switch applications');
   $('connect').click(); await ready(); check(fake.opened, 'connect and read all slots');
   check(edit===active&&$('editSlot').value==='0','connect edits the active profile rather than stale edit slot');
   change('editSlot','1');await ready();$('read').click();await ready();check(edit===1,'explicit read preserves chosen inactive edit slot');
@@ -123,6 +124,18 @@ try {
   location.hash='#config';await waitFor(()=>!$('config').hidden);change('output','2');change('stickPower','2');check($('curveUnits').textContent.includes('摇杆'),'stick response curve follows edited output');change('activation','2');const buttons=$('buttons').querySelector('[data-bit="22"]');buttons.checked=true;check($('activation').value==='2','toggle activation can bind independent rear button');
   const data=new Uint8Array(63);data.fill(128,0,4);data[0]=255;data[4]=255;data[7]=0x28;data[32]=128;data[36]=128;const event=new Event('inputreport');event.reportId=1;event.data=new DataView(data.buffer);fake.dispatchEvent(event);await waitFor(()=>$('l2Value').textContent==='100%');check($('controllerVisual').querySelector('[data-bit="1"]').classList.contains('pressed'),'controller diagram follows real input events');check($('leftStickValue').textContent.includes('1.000'),'stick visualization follows USB input');
   location.hash='#tester';await waitFor(()=>!$('tester').hidden);
+  location.hash='#update';await waitFor(()=>!$('update').hidden);
+  const oldPicker=hid.requestDevice;let bootSelected=0,bootOpened=false,bootAck=[0,0];
+  const bootFake={vendorId:0x1209,productId:1,productName:'SIMULATED BOOT MANAGER',collections:[{usagePage:0xFF00,featureReports:[{reportId:0x70}]}],
+   get opened(){return bootOpened;},async open(){bootOpened=true;},async close(){bootOpened=false;},
+   async receiveFeatureReport(){const p=new Uint8Array(64);p[0]=0x70;p.set(new TextEncoder().encode('DBMR'),1);p[5]=p[6]=p[12]=p[61]=1;p[7]=bootSelected;p[8]=3;p[9]=bootAck[0];p[11]=bootAck[1];p.set(new TextEncoder().encode('G2.4'),17);p.set(new TextEncoder().encode('3.24H'),37);return new DataView(p.buffer);},
+   async sendFeatureReport(id,p){check(id===0x70&&p.length===63,'boot manager command uses full feature report');bootSelected=p[2];bootAck=[p[0],p[1]];}};
+  hid.requestDevice=async({filters})=>filters.some(f=>f.usagePage===0xFF00)?[bootFake]:[];
+  $('bootConnect').click();await waitFor(()=>!$('bootSlot1').disabled);
+  check($('bootVersion0').textContent==='G2.4'&&$('bootVersion1').textContent==='3.24H','boot manager renders both application versions');
+  $('bootSlot1').click();await waitFor(()=>!bootOpened&&$('bootState').textContent.includes('切换回执成功'));
+  check(bootSelected===1&&$('bootSlot0').disabled&&fake.opened,'boot manager switches only its own simulated interface');
+  hid.requestDevice=oldPicker;location.hash='#tester';await waitFor(()=>!$('tester').hidden);
   $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');
   fake.vendorId=0x1209;fake.productId=1;
   $('connect').click(); await ready(); check(!$('identityWarning').hidden,'private test identity is clearly identified');

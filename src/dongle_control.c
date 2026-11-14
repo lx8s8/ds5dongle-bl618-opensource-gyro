@@ -12,6 +12,11 @@ static volatile uint8_t published;
 static uint8_t read_profile, last_report, last_command, last_result, last_sequence;
 static bool config_saved;
 static struct config_body saved_config;
+#ifdef DS5_BOOT_MANAGER_CLIENT
+extern bool boot_manager_request(void);
+#else
+static bool boot_manager_request(void){return false;}
+#endif
 _Static_assert(sizeof(struct config_body) <= 40, "config overlaps command acknowledgement");
 
 void dongle_control_publish(void)
@@ -51,6 +56,9 @@ uint8_t dongle_control_command(uint8_t rid, const uint8_t *p, uint16_t len)
         } else if (p[0] == 2 || p[0] == 3) {
             last_result = save_config() ? 0 : 2;
             if (!last_result && p[0] == 3) effects = DONGLE_RESET;
+        } else if (p[0] == 4 && len == 63) {
+            last_result = boot_manager_request() ? 0 : 1;
+            if (!last_result) effects = DONGLE_RESET;
         }
     } else if (rid == 0xFB) {
         uint8_t profile = len >= 2 ? p[1] : remap_get_active_profile();

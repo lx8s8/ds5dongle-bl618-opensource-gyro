@@ -99,6 +99,17 @@ jobs:
             build/generated/defconfig.cmake
           if-no-files-found: ignore
           retention-days: 14
+      - name: Compile experimental independent boot manager
+        if: matrix.board == 'lctech616' && matrix.usb == 'fs'
+        run: bash scripts/build_boot_manager.sh
+      - name: Upload experimental boot manager
+        if: matrix.board == 'lctech616' && matrix.usb == 'fs'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: boot-manager-experimental
+          path: dist/boot-manager/*
+          if-no-files-found: error
+          retention-days: 14
 
   control-center:
     name: Desktop control center

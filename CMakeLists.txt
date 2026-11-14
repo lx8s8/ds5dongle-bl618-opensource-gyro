@@ -11,6 +11,7 @@ find_package(bouffalo_sdk REQUIRED HINTS $ENV{BL_SDK_BASE})
 
 # Incoming Bluetooth HCI/L2CAP reports must preempt audio encoding.
 sdk_add_compile_definitions(-DCONFIG_BT_RX_PRIO=5)
+sdk_add_compile_definitions(-DDS5_BOOT_MANAGER_CLIENT=1)
 
 sdk_set_main_file(src/main.c)
 
@@ -30,6 +31,8 @@ target_sources(app PRIVATE
     src/gyro_runtime.c
     src/diagnostics.c
     src/dongle_control.c
+    src/boot_manager_client.c
+    boot/manager/boot_store.c
 )
 
 if(DEFINED ENV{USB_DIAGNOSTIC} AND "$ENV{USB_DIAGNOSTIC}" STREQUAL "1")
@@ -37,6 +40,7 @@ if(DEFINED ENV{USB_DIAGNOSTIC} AND "$ENV{USB_DIAGNOSTIC}" STREQUAL "1")
 endif()
 
 sdk_add_include_directories(src)
+sdk_add_include_directories(boot/manager)
 sdk_add_include_directories(${BL_SDK_BASE}/components/wireless/bluetooth/blestack/src/include)
 sdk_add_include_directories(${BL_SDK_BASE}/components/wireless/bluetooth/btprofile/include)
 sdk_add_include_directories(${BL_SDK_BASE}/components/utils/partition)
