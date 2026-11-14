@@ -52,7 +52,7 @@ python3 -m venv .desktop-build
 .desktop-build/bin/python scripts/package_control_center.py --freeze
 ```
 
-Windows 使用 `.desktop-build\Scripts\python.exe` 和同目录 `pip.exe`。产物在 `dist/control-center/`。macOS 应用尚未做 Apple Developer ID 签名和公证；Windows 应用尚未做 Authenticode 签名。跨系统产物由 `Control center` Actions 在 Windows/macOS 分别构建，不能在 Mac 上直接交叉生成并验证 Windows 可执行文件。
+Windows 使用 `.desktop-build\Scripts\python.exe` 和同目录 `pip.exe`。产物在 `dist/control-center/`。macOS 应用尚未做 Apple Developer ID 签名和公证；Windows 应用尚未做 Authenticode 签名。跨系统产物由 `Control center` Actions 在 Windows、macOS Apple Silicon 和 Intel 运行器分别构建，ZIP 名称包含架构，不能在 Mac 上直接交叉生成并验证 Windows 可执行文件。
 
 ## Tauri 是否可行
 
