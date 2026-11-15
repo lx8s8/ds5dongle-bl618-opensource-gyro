@@ -7,7 +7,7 @@ static uint32_t u32(const uint8_t*p){return u16(p)|((uint32_t)u16(p+2)<<16);}
 static void p16(uint8_t*p,uint16_t v){p[0]=v;p[1]=v>>8;}
 static void p32(uint8_t*p,uint32_t v){p16(p,v);p16(p+2,v>>16);}
 uint32_t bm_crc32(const uint8_t*p,size_t n){uint32_t c=~0u;while(n--){c^=*p++;for(int i=0;i<8;i++)c=(c>>1)^(0xEDB88320u&(0u-(c&1)));}return ~c;}
-bool bm_decode(const uint8_t*p,bm_record*r){
+bool bm_decode(const uint8_t p[BM_RECORD_SIZE],bm_record*r){
  if(memcmp(p,"DBM1",4)||u16(p+4)!=1||u16(p+6)!=BM_RECORD_SIZE||p[12]>1||p[13]!=BM_BOARD_LCTECH_FS||
     p[14]>1||p[15]||bm_crc32(p,252)!=u32(p+252))return false;
  for(size_t i=144;i<252;i++)if(p[i])return false;
@@ -21,7 +21,7 @@ bool bm_decode(const uint8_t*p,bm_record*r){
  }
  *r=v;return true;
 }
-void bm_encode(const bm_record*r,uint8_t*p){
+void bm_encode(const bm_record*r,uint8_t p[BM_RECORD_SIZE]){
  memset(p,0,BM_RECORD_SIZE);memcpy(p,"DBM1",4);p16(p+4,1);p16(p+6,BM_RECORD_SIZE);p32(p+8,r->generation);p[12]=r->selected;p[13]=BM_BOARD_LCTECH_FS;p[14]=r->manage;
  for(int i=0;i<2;i++){uint8_t*q=p+16+i*64;const bm_image*im=&r->image[i];p32(q,im->address);p32(q+4,im->capacity);p32(q+8,im->image_length);memcpy(q+12,im->sha256,32);memcpy(q+44,im->version,20);}
  p32(p+252,bm_crc32(p,252));
