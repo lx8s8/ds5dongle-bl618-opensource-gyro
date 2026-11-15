@@ -7,17 +7,28 @@ assert.equal(encodeConfig(c).length, 40);
 for (const changes of [
   { threshold: 0 }, { sx: NaN }, { sy: Infinity }, { sx: .001 }, { sx: '2' },
   { activation: 1, trigger: 0, buttons: 0 }, { accelStart: 180, accelEnd: 180 },
-  { buttons: 0x1000000 }, { flags: 64 }, { horizontal: 3 }, { profileSource: 1, profiles: 0 },
-  { profileSource: 2, profiles: 4 },
+  { buttons: 0x1000000 }, { flags: 128 }, { horizontal: 3 }, { profileSource: 1, profiles: 0 },
+  { profileSource: 2, profiles: 4 }, { fireBiasDps: 64 }, { fireBiasDps: .25 }, { fireRampMs: 3200 }, { fireRampMs: 25 },
 ]) assert.throws(() => encodeConfig({ ...c, ...changes }));
 for (const changes of [
   { output: 1, activation: 2, trigger: 0, buttons: 1 << 21 },
   { output: 2, activation: 0, profileSource: 1, profiles: 2 },
   { output: 1, activation: 0, profileSource: 2, profiles: 2 },
   { output: 1, horizontal: 2, flags: 16 | 32 },
+  { output: 1, flags: 64, fireBiasDps: 12.5, fireRampMs: 300 },
+  { output: 2, blend: 1, profileSource: 2, profiles: 1, flags: 64, fireBiasDps: 63.5, fireRampMs: 3150 },
 ]) {
   const config = { ...c, ...changes };
   assert.deepEqual(decodeConfig(encodeConfig(config)), config);
+}
+{
+  // Fire bias shares bytes 34/35 with blend/profile source without disturbing them.
+  const packed = encodeConfig({ ...c, output: 2, blend: 1, profileSource: 2, profiles: 1, flags: 64, fireBiasDps: 10, fireRampMs: 1000 });
+  assert.equal(packed[34], 1 | (20 << 1)); assert.equal(packed[35], 2 | (20 << 2)); assert.equal(packed[5], 64);
+  // Old exports without the new fields still import with the bias disabled.
+  const legacy = { ...c }; delete legacy.fireBiasDps; delete legacy.fireRampMs;
+  const bundle = importBundle({ version: 2, profiles: [legacy, legacy, legacy, legacy], settings: globalDefaults() });
+  assert.equal(bundle.profiles[0].fireBiasDps, 0); assert.equal(bundle.profiles[0].fireRampMs, 0);
 }
 const wire = new Uint8Array(64); wire[0] = 0xFC; wire.set(encodeConfig(c), 1);
 assert.deepEqual(decodeConfig(featureBytes(new DataView(wire.buffer), 0xFC)), c);

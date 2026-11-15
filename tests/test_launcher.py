@@ -57,13 +57,20 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(self.request('POST', good)[0], 403)
         auth = {'Origin': self.server.origin, 'X-Session-Token': json.loads(self.request('GET', '/api/local')[2])['token']}
         for bad in ['repo=evil%2Frepo&tag=v1&name=a.zip', 'repo=' + repo + '&tag=..%2Fx&name=a.zip',
-                    'repo=' + repo + '&tag=v1&name=a.exe', 'repo=' + repo + '&tag=v1&name=a.zip&name=b.zip', 'tag=v1&name=a.zip']:
+                    'repo=' + repo + '&tag=v1&name=a.exe', 'repo=' + repo + '&tag=v1&name=other.bin',
+                    'repo=' + repo + '&tag=v1&name=a.zip&name=b.zip', 'tag=v1&name=a.zip']:
             self.assertEqual(self.request('POST', '/api/download?' + bad, auth)[0], 400, bad)
         with patch.object(launcher, 'fetch_release', return_value=b'PK-test') as fetch:
             status, headers, body = self.request('POST', good, auth)
         self.assertEqual((status, body), (200, b'PK-test'))
         self.assertEqual(headers['Content-Type'], 'application/zip')
         fetch.assert_called_once_with('https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc4/ds5dongle-aim61-fs-746aa866.zip')
+        mgr = '/api/download?repo=' + repo + '&tag=v3.18-g2.4-rc6&name=ds5-boot-manager-lctech616-fs-experimental.bin'
+        with patch.object(launcher, 'fetch_release', return_value=b'BFNP-mgr') as fetch_mgr:
+            status, headers, body = self.request('POST', mgr, auth)
+        self.assertEqual((status, body), (200, b'BFNP-mgr'))
+        self.assertEqual(headers['Content-Type'], 'application/octet-stream')
+        fetch_mgr.assert_called_once_with('https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc6/ds5-boot-manager-lctech616-fs-experimental.bin')
         with patch.object(launcher, 'fetch_release', side_effect=OSError('offline')):
             self.assertEqual(self.request('POST', good, auth)[0], 502)
 

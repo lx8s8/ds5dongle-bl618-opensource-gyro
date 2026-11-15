@@ -9,7 +9,7 @@ export const fields = [
   { id: 'adsMultiplier', label: 'L2 瞄准倍率', group: 'motion', offset: 38, size: 2, scale: 100, min: .01, max: 4, step: .01, default: 1 },
   { id: 'hold', label: '长按延时 · ms', group: 'activation', offset: 8, size: 2, min: 0, max: 3000, default: 0 },
   { id: 'horizontal', label: '水平转动轴', group: 'activation', offset: 6, options: ['Yaw · 左右转动', 'Roll · 左右侧倾', '玩家空间 · 重力防串轴'], default: 0 },
-  { id: 'profileSource', label: '配置档绑定', group: 'profile', offset: 35, options: ['不限制档位', 'Edge 原生 Fn 配置档', '接收器映射档（通用）'], default: 0 },
+  { id: 'profileSource', label: '配置档绑定', group: 'profile', offset: 35, mask: 3, options: ['不限制档位', 'Edge 原生 Fn 配置档', '接收器映射档（通用）'], default: 0 },
   { id: 'sx', label: '水平灵敏度 · 倍', group: 'motion', offset: 10, size: 2, scale: 100, min: .01, max: 100, step: .01, default: 2 },
   { id: 'sy', label: '垂直灵敏度 · 倍', group: 'motion', offset: 12, size: 2, scale: 100, min: .01, max: 100, step: .01, default: 2 },
   { id: 'mouseCpd', label: '鼠标基准 · counts/°', group: 'motion', offset: 14, size: 2, scale: 100, min: .01, max: 100, step: .01, default: 12 },
@@ -21,7 +21,10 @@ export const fields = [
   { id: 'maxTurn', label: '游戏满杆转速 · °/s', group: 'stick', offset: 18, size: 2, min: 1, max: 3000, default: 360 },
   { id: 'stickDeadzone', label: '游戏死区补偿 · %', group: 'stick', offset: 20, size: 2, scale: 10, min: 0, max: 50, step: .1, default: 10 },
   { id: 'stickPower', label: '游戏响应曲线 · 指数', group: 'stick', offset: 22, size: 2, scale: 100, min: .25, max: 4, step: .01, default: 1 },
-  { id: 'blend', label: '物理右摇杆', group: 'stick', offset: 34, options: ['与体感叠加', '体感启用时替代'], default: 0 },
+  { id: 'blend', label: '物理右摇杆', group: 'stick', offset: 34, mask: 1, options: ['与体感叠加', '体感启用时替代'], default: 0 },
+  // Packed into spare bits of bytes 34/35 (wire-compatible with older firmware records).
+  { id: 'fireBiasDps', label: '开火下压速度 · °/s', group: 'motion', offset: 34, shift: 1, mask: 127, scale: 2, min: 0, max: 63.5, step: .5, default: 0 },
+  { id: 'fireRampMs', label: '开火下压渐入时间 · ms', group: 'motion', offset: 35, shift: 2, mask: 63, scale: .02, min: 0, max: 3150, step: 50, default: 0 },
 ];
 
 export function defaults() {
@@ -37,10 +40,10 @@ export function encodeConfig(c) {
     if (!Number.isFinite(n) || n < min || n > max || Math.abs(n * scale - Math.round(n * scale)) > .00001)
       throw new Error(`${f.label}超出范围或精度`);
     if (f.size === 2) v.setUint16(f.offset, Math.round(n * scale), true);
-    else v.setUint8(f.offset, Math.round(n));
+    else bytes[f.offset] |= Math.round(n * scale) << (f.shift || 0);
   }
   if (!Number.isInteger(c.buttons) || c.buttons < 0 || c.buttons > 0xFFFFFF ||
-      !Number.isInteger(c.flags) || c.flags < 0 || c.flags > 63 ||
+      !Number.isInteger(c.flags) || c.flags < 0 || c.flags > 127 ||
       !Number.isInteger(c.profiles) || c.profiles < 0 || c.profiles > 15)
     throw new Error('按键或配置档掩码无效');
   if (c.activation !== 0 && !c.trigger && !c.buttons) throw new Error('请选择扳机或至少一个启用键');
@@ -55,10 +58,13 @@ export function encodeConfig(c) {
 export function decodeConfig(bytes) {
   if (bytes.length < 40 || ![1, 2].includes(bytes[0])) throw new Error('不支持的体感配置版本');
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), c = {};
-  for (const f of fields) c[f.id] = (f.size === 2 ? v.getUint16(f.offset, true) : v.getUint8(f.offset)) / (f.scale || 1);
+  for (const f of fields) {
+    const raw = f.size === 2 ? v.getUint16(f.offset, true) : (v.getUint8(f.offset) >> (f.shift || 0)) & (f.mask ?? 0xFF);
+    c[f.id] = raw / (f.scale || 1);
+  }
   c.flags = bytes[5]; c.buttons = v.getUint32(30, true); c.profiles = bytes[36];
   if (bytes[0] === 1) {
-    if (bytes[37] || bytes[38] || bytes[39]) throw new Error('配置格式错误');
+    if (bytes[37] || bytes[38] || bytes[39] || bytes[34] > 1 || bytes[35] > 2) throw new Error('配置格式错误');
     c.releaseThreshold = c.threshold; c.adsMultiplier = 1;
   }
   encodeConfig(c);
@@ -138,13 +144,13 @@ export function decodeDiagnostics(bytes) {
 }
 export function importBundle(data) {
   if (data?.version === 2 && Array.isArray(data.profiles) && data.profiles.length === 4) {
-    const profiles = data.profiles.map(c => decodeConfig(encodeConfig(c)));
+    const profiles = data.profiles.map(c => decodeConfig(encodeConfig({ ...defaults(), fireBiasDps: 0, fireRampMs: 0, ...c })));
     const out = { profiles, settings: decodeGlobal(encodeGlobal(data.settings)) };
     if (Array.isArray(data.slotNames)) out.slotNames = data.slotNames.slice(0, 4).map(s => String(s || '').trim().slice(0, 16));
     return out;
   }
   if (data?.version === 1 && data.config) {
-    const config = { ...data.config, releaseThreshold: data.config.threshold, adsMultiplier: 1 };
+    const config = { ...defaults(), ...data.config, releaseThreshold: data.config.threshold, adsMultiplier: 1 };
     const settings = globalDefaults();
     settings.source = config.profileSource;
     if (settings.source) {

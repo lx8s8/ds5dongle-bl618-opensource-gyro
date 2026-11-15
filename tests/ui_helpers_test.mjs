@@ -120,6 +120,11 @@ for (const preset of GYRO_PRESETS) {
   assert.equal(changes.some(c => c.id === 'horizontal'), true);
   assert.equal(changes.some(c => c.id === 'autoBias'), true);
   assert.equal(changes.some(c => c.id === 'adaptiveSmooth'), true);
+  const biased = diffGyroConfigs(base, { ...base, flags: 64, fireBiasDps: 7.5, fireRampMs: 250 });
+  assert.equal(biased.some(c => c.id === 'fireBias'), true);
+  assert.equal(biased.find(c => c.id === 'fireBiasDps').to, '7.5');
+  assert.equal(configsMatch(base, { ...base, fireBiasDps: 0.5 }), false);
+  assert.ok(summarizeGyroConfig({ ...base, output: 1, flags: 64, fireBiasDps: 7.5 }).includes('开火下压 7.5°/s'));
 
   const bundleDiff = diffConfigBundles(
     { profiles: [base, base, base, base], settings: globalDefaults(), slotNames: ['', '', '', ''] },

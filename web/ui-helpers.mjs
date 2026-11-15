@@ -18,6 +18,7 @@ export const GYRO_FLAG_BITS = [
   { bit: 8, id: 'allButtons', label: '组合键同时按住' },
   { bit: 16, id: 'autoBias', label: '自动静止温漂校准' },
   { bit: 32, id: 'adaptiveSmooth', label: '自适应微瞄滤波' },
+  { bit: 64, id: 'fireBias', label: '开火下压偏置' },
 ];
 
 export const GYRO_PRESETS = [
@@ -260,6 +261,7 @@ export function summarizeGyroConfig(c) {
   const extras = [];
   if (c.flags & 16) extras.push('自动温漂');
   if (c.flags & 32) extras.push('自适应滤波');
+  if (c.flags & 64) extras.push(`开火下压 ${Number(c.fireBiasDps || 0)}°/s`);
   const suffix = extras.length ? ` · ${extras.join('+')}` : '';
   return `${describeTriggerCondition(c)} → ${mode} ${sens}${ads}${space}${suffix}`;
 }
@@ -328,6 +330,7 @@ export function formatSlotTitle(index, customName = '') {
 function formatFieldVal(f, val) {
   if (f.options) return f.options[Number(val)] ?? String(val);
   const scale = f.scale || 1;
+  if (f.step && f.step < 1 && scale < 10) return Number(val).toFixed(1).replace(/\.0$/, '');
   if (scale >= 100) return Number(val).toFixed(2).replace(/\.?0+$/, '');
   if (scale >= 10) return Number(val).toFixed(1).replace(/\.0$/, '');
   return String(Math.round(Number(val)));

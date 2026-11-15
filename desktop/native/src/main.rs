@@ -72,13 +72,17 @@ fn safe_component(value: &str) -> bool {
     !value.is_empty() && value.len() <= 100 && !value.contains("..") && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+fn allowed_asset(name: &str) -> bool {
+    name.ends_with(".zip") || (name.starts_with("ds5-boot-manager-") && name.ends_with(".bin"))
+}
+
 // The page cannot read GitHub release assets (no CORS), so the local tool fetches
-// only release ZIPs of the two known repositories, using the operating system's curl.
+// only release ZIPs and boot-manager binaries of the two known repositories, using curl.
 fn release_url(query: &str) -> Option<String> {
     let repo = query_value(query, "repo")?;
     let tag = query_value(query, "tag")?;
     let name = query_value(query, "name")?;
-    if !REPOSITORIES.contains(&repo.as_str()) || !safe_component(&tag) || !safe_component(&name) || !name.ends_with(".zip") { return None; }
+    if !REPOSITORIES.contains(&repo.as_str()) || !safe_component(&tag) || !safe_component(&name) || !allowed_asset(&name) { return None; }
     Some(format!("https://github.com/{repo}/releases/download/{tag}/{name}"))
 }
 
@@ -347,8 +351,9 @@ fn serve(mut stream: TcpStream, server: &Server) -> io::Result<()> {
         let result = download_release(&url);
         server.downloading.store(false, Ordering::Release);
         stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+        let mime = if url.ends_with(".bin") { "application/octet-stream" } else { "application/zip" };
         return match result {
-            Ok(data) => reply(&mut stream, 200, "application/zip", &data, false),
+            Ok(data) => reply(&mut stream, 200, mime, &data, false),
             Err(message) => reply(&mut stream, 502, "text/plain", message.as_bytes(), false),
         };
     }

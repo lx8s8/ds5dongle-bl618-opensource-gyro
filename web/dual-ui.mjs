@@ -5,9 +5,15 @@ import {
 } from './dual-firmware.mjs';
 import { extractAppVersion, loadFirmwarePackage } from './firmware-package.mjs';
 import { Flasher, USB_FILTERS, WebSerialLink } from './isp-flasher.mjs';
+import {
+  bootManagerAssets, fetchVerifiedAsset, findLatestReleaseAsset,
+  getCachedReleases, releaseAssets, repositories, safeAssetURL,
+} from './releases.mjs';
+import { createLocalDownloader } from './updates.mjs';
 
 const MAX_FILE = 8 * 1024 * 1024;
 const hexPrefix = b => Array.from(b.subarray(0, 4), v => v.toString(16).padStart(2, '0')).join('');
+const fallbackTagVersion = tag => String(tag || '').replace(/^v/i, '').replace(/[^\x20-\x7e]/g, '').slice(0, 19);
 
 function downloadBlob(name, bytes) {
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
@@ -46,7 +52,7 @@ export function initDualFirmware() {
   const root = $('dualTools');
   if (!root) return {};
   const supported = 'serial' in navigator;
-  let running = false;
+  let running = false, downloading = false, cachedDownloader = null;
   $('dualSupport').hidden = supported;
 
   const state = {
@@ -96,25 +102,40 @@ export function initDualFirmware() {
       };
     }
     if (versionId) $(versionId).oninput = onChange;
-    return { reload: () => state[key] && pick(state[key].rawName, state[key].rawBytes, state[key].variant) };
+    const load = async (fileName, rawBytes, { preferredVariant, fallbackVersion } = {}) => {
+      await pick(fileName, rawBytes);
+      if (preferredVariant && state[key]?.variant !== preferredVariant && state[key]?.variants.some(v => v.id === preferredVariant)) {
+        await pick(fileName, rawBytes, preferredVariant);
+      }
+      if (!state[key]?.version && fallbackVersion && $(versionId)) {
+        $(versionId).value = fallbackVersion;
+        onChange();
+      }
+    };
+    return {
+      reload: () => state[key] && pick(state[key].rawName, state[key].rawBytes, state[key].variant),
+      load,
+    };
   }
 
   function updateButtons() {
+    const busy = running || downloading;
     const op = $('dualOp').value;
     for (const name of ['slot', 'install', 'restore']) $('dualPane_' + name).hidden = op !== name;
-    for (const id of ['dualInspect', 'dualBackup', 'dualOp', 'dualSlotTarget', 'dualSlotFile', 'dualSlotVersion',
+    for (const id of ['dualInspect', 'dualBackup', 'dualOp', 'dualSlotTarget', 'dualSlotUsb', 'dualSlotFile',
+      'dualSlotVersion', 'dualAutoSlot', 'dualInstallUsb', 'dualAutoMgr', 'dualAutoGyro', 'dualAutoUp', 'dualAutoAll',
       'dualMgrFile', 'dualGyroFile', 'dualGyroVer', 'dualUpFile', 'dualUpVer', 'dualUpSnapFile',
       'dualOrigFile', 'dualRestoreSlot', 'dualInstallConfirm', 'dualRestoreConfirm']) {
-      if ($(id)) $(id).disabled = running;
+      if ($(id)) $(id).disabled = busy;
     }
-    if ($('dualSlotVariant')) $('dualSlotVariant').disabled = running || !state.slot || state.slot.variants.length <= 1;
-    if ($('dualGyroVariant')) $('dualGyroVariant').disabled = running || !state.gyro || state.gyro.variants.length <= 1;
-    if ($('dualUpVariant')) $('dualUpVariant').disabled = running || !state.upstream || state.upstream.variants.length <= 1;
+    if ($('dualSlotVariant')) $('dualSlotVariant').disabled = busy || !state.slot || state.slot.variants.length <= 1;
+    if ($('dualGyroVariant')) $('dualGyroVariant').disabled = busy || !state.gyro || state.gyro.variants.length <= 1;
+    if ($('dualUpVariant')) $('dualUpVariant').disabled = busy || !state.upstream || state.upstream.variants.length <= 1;
 
-    $('dualSlotRun').disabled = running || !supported || !state.slot || !$('dualSlotVersion').value.trim();
-    $('dualInstallRun').disabled = running || !supported || !state.manager || !state.gyro || !state.upstream ||
+    $('dualSlotRun').disabled = busy || !supported || !state.slot || !$('dualSlotVersion').value.trim();
+    $('dualInstallRun').disabled = busy || !supported || !state.manager || !state.gyro || !state.upstream ||
       !$('dualGyroVer').value.trim() || !$('dualUpVer').value.trim() || !$('dualInstallConfirm').checked;
-    $('dualRestoreRun').disabled = running || !supported || !state.original || !$('dualRestoreConfirm').checked;
+    $('dualRestoreRun').disabled = busy || !supported || !state.original || !$('dualRestoreConfirm').checked;
   }
 
   const slotPicker = bindAppPicker({
@@ -127,25 +148,141 @@ export function initDualFirmware() {
     slotPicker.reload()?.catch(err => { state.slot = null; $('dualSlotFile').value = ''; $('dualSlotSummary').textContent = ''; say(err.message, true); updateButtons(); });
     updateButtons();
   };
-  bindAppPicker({
+  const gyroPicker = bindAppPicker({
     fileId: 'dualGyroFile', variantFieldId: 'dualGyroVariantField', variantId: 'dualGyroVariant',
     versionId: 'dualGyroVer', summaryId: 'dualGyroSummary',
     getMaxLength: () => SLOT_CAPACITY[0], label: '体感固件', key: 'gyro', onChange: updateButtons,
   });
-  bindAppPicker({
+  const upPicker = bindAppPicker({
     fileId: 'dualUpFile', variantFieldId: 'dualUpVariantField', variantId: 'dualUpVariant',
     versionId: 'dualUpVer', summaryId: 'dualUpSummary',
     getMaxLength: () => SLOT_CAPACITY[1], label: '上游固件', key: 'upstream', onChange: updateButtons,
+  });
+
+  async function loadManagerBytes(name, bytes, extra = '', { scroll = false } = {}) {
+    await validateManagerImage(bytes);
+    state.manager = bytes;
+    if ($('dualMgrFile')) $('dualMgrFile').value = '';
+    $('dualMgrSummary').textContent = `${name} · ${bytes.length} B · SHA256 验证通过${extra}`;
+    if (scroll) {
+      if ($('dualToolsDetails')) $('dualToolsDetails').open = true;
+      $('dualOp').value = 'install';
+      $('dualMgrSummary').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    updateButtons();
+  }
+
+  async function probeDownloader() {
+    if (!cachedDownloader) cachedDownloader = await createLocalDownloader();
+    return cachedDownloader;
+  }
+
+  async function withDownload(label, task) {
+    if (running || downloading) return;
+    downloading = true;
+    updateButtons();
+    say(`正在准备${label}…`);
+    try {
+      await task();
+    } catch (err) {
+      say(err.message, true);
+    } finally {
+      downloading = false;
+      updateButtons();
+    }
+  }
+
+  async function fetchMatchedAsset({ repo, includePrerelease, allowPrereleaseFallback, pickAssets, emptyError, dl, manualHint }) {
+    const releases = await getCachedReleases(repo);
+    const match = findLatestReleaseAsset(releases, { includePrerelease, allowPrereleaseFallback, pickAssets });
+    if (!match) throw new Error(emptyError);
+    say(`正在下载 ${match.asset.name}（${match.release.tag_name}）…`);
+    const { bytes, verified } = await fetchVerifiedAsset({
+      repo, release: match.release, asset: match.asset, downloader: dl, manualHint,
+    });
+    return { ...match, bytes, verified };
+  }
+
+  async function downloadManagerAsset(dl) {
+    const includePre = $('includePrerelease')?.checked ?? true;
+    const hit = await fetchMatchedAsset({
+      repo: repositories.gyro, includePrerelease: includePre, allowPrereleaseFallback: true,
+      pickAssets: r => bootManagerAssets(r, 'lctech616', 'fs').filter(a => safeAssetURL(a.browser_download_url, repositories.gyro)),
+      emptyError: '没有找到可下载的 LCTech 616 启动管理器镜像', dl,
+      manualHint: '请在下方“启动管理器 .bin”选择该文件',
+    });
+    await loadManagerBytes(hit.asset.name, hit.bytes, hit.prereleaseFallback ? ' · 来自预发布版本' : '');
+    return hit;
+  }
+
+  async function downloadAppAsset({ repo, upstream, usb, picker, fileInputId, emptyError, manualHint, dl }) {
+    const includePre = upstream ? false : ($('includePrerelease')?.checked ?? true);
+    const hit = await fetchMatchedAsset({
+      repo, includePrerelease: includePre, allowPrereleaseFallback: true,
+      pickAssets: r => releaseAssets(r, 'lctech616', usb, upstream).filter(a => safeAssetURL(a.browser_download_url, repo)),
+      emptyError, dl, manualHint,
+    });
+    await picker.load(hit.asset.name, hit.bytes, {
+      preferredVariant: usb, fallbackVersion: fallbackTagVersion(hit.release.tag_name),
+    });
+    if ($(fileInputId)) $(fileInputId).value = '';
+    return hit;
+  }
+
+  const installUsb = () => ($('dualInstallUsb')?.value === 'hs' ? 'hs' : 'fs');
+  const fetchGyroForInstall = dl => downloadAppAsset({
+    repo: repositories.gyro, upstream: false, usb: installUsb(), picker: gyroPicker, fileInputId: 'dualGyroFile',
+    emptyError: `没有找到匹配 LCTech 616 ${installUsb().toUpperCase()} 的体感固件发布`, dl,
+    manualHint: '请在下方“体感固件”选择该文件',
+  });
+  const fetchUpForInstall = dl => downloadAppAsset({
+    repo: repositories.upstream, upstream: true, usb: installUsb(), picker: upPicker, fileInputId: 'dualUpFile',
+    emptyError: '没有找到可下载的上游原版 LCTech 616 发布包', dl,
+    manualHint: '请在下方“上游原版固件”选择该文件',
+  });
+
+  if ($('dualAutoMgr')) $('dualAutoMgr').onclick = () => withDownload('启动管理器', async () => {
+    const hit = await downloadManagerAsset(await probeDownloader());
+    say(`已下载并验证启动管理器 ${hit.asset.name}（${hit.release.tag_name}${hit.verified ? ' · SHA256 一致' : ''}）。`);
+  });
+  if ($('dualAutoGyro')) $('dualAutoGyro').onclick = () => withDownload('最新体感固件', async () => {
+    const hit = await fetchGyroForInstall(await probeDownloader());
+    say(`已下载并验证体感固件 ${hit.asset.name}（${hit.release.tag_name}${hit.verified ? ' · SHA256 一致' : ''}）。`);
+  });
+  if ($('dualAutoUp')) $('dualAutoUp').onclick = () => withDownload('最新上游原版固件', async () => {
+    const hit = await fetchUpForInstall(await probeDownloader());
+    say(`已下载并验证上游原版 ${hit.asset.name}（${hit.release.tag_name}${hit.verified ? ' · SHA256 一致' : ''}）。`);
+  });
+  if ($('dualAutoAll')) $('dualAutoAll').onclick = () => withDownload('全套双固件资源', async () => {
+    const dl = await probeDownloader();
+    if (!dl) throw new Error('当前不是桌面控制中心，浏览器无法直接读取 GitHub 附件。请运行桌面版控制中心后点“一键下载全套”，或分别点击单个下载按钮。');
+    say('正在下载 (1/3) 启动管理器…');
+    const mgr = await downloadManagerAsset(dl);
+    say('正在下载 (2/3) 最新体感固件…');
+    const gyro = await fetchGyroForInstall(dl);
+    say('正在下载 (3/3) 最新上游原版固件…');
+    const up = await fetchUpForInstall(dl);
+    say(`全套文件已下载并校验就绪：管理器 ${mgr.release.tag_name} · 体感 ${gyro.release.tag_name} · 上游 ${up.release.tag_name}。核对版本号并勾选确认后即可安装。`);
+  });
+  if ($('dualAutoSlot')) $('dualAutoSlot').onclick = () => withDownload('匹配槽位固件', async () => {
+    const slot = Number($('dualSlotTarget').value);
+    const usb = $('dualSlotUsb')?.value === 'hs' ? 'hs' : 'fs';
+    const isUp = slot === 1;
+    const hit = await downloadAppAsset({
+      repo: isUp ? repositories.upstream : repositories.gyro, upstream: isUp, usb, picker: slotPicker,
+      fileInputId: 'dualSlotFile',
+      emptyError: isUp ? '没有找到可下载的上游原版 LCTech 616 发布包' : `没有找到匹配 LCTech 616 ${usb.toUpperCase()} 的体感固件发布`,
+      dl: await probeDownloader(),
+      manualHint: '请在下方“固件包 ZIP 或 .bin”选择该文件',
+    });
+    say(`已下载并验证槽位 ${slot}（${isUp ? '上游原版' : '体感固件'}）${hit.asset.name}（${hit.release.tag_name}${hit.verified ? ' · SHA256 一致' : ''}）。`);
   });
 
   $('dualMgrFile').onchange = async e => {
     state.manager = null; $('dualMgrSummary').textContent = '';
     const f = e.target.files[0]; if (!f) { updateButtons(); return; }
     try {
-      const bytes = new Uint8Array(await f.arrayBuffer());
-      await validateManagerImage(bytes);
-      state.manager = bytes;
-      $('dualMgrSummary').textContent = `${f.name} · ${bytes.length} B · SHA256 验证通过`;
+      await loadManagerBytes(f.name, new Uint8Array(await f.arrayBuffer()));
     } catch (err) { e.target.value = ''; say(err.message, true); }
     updateButtons();
   };
@@ -277,5 +414,5 @@ export function initDualFirmware() {
   });
 
   updateButtons();
-  return {};
+  return { loadManagerSource: (name, bytes, opts) => loadManagerBytes(name, bytes, '', opts) };
 }

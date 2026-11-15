@@ -9,8 +9,8 @@ static struct {
     bool connected, active, held, qualified, latched, timestamp_valid, toggle_armed;
     bool factory, calibrating, calibrated, trigger_held, ads_held, paused;
     bool cal_clock, cal_failed, stick_moving;
-    bool still, auto_calibrated, gravity_valid;
-    uint32_t cal_started;
+    bool still, auto_calibrated, gravity_valid, fire_held;
+    uint32_t cal_started, fire_since;
     uint16_t fine_multiplier;
     uint32_t last_sensor, last_host, held_since, dt_us, packets, buttons;
     float scale[3], factory_bias[3], bias[3], rate[3], filtered[2], pending[2], gravity[3];
@@ -51,8 +51,10 @@ static void encode(const struct gyro_config *c, uint8_t *p)
     put16(p + 18, c->max_turn_dps); put16(p + 20, c->stick_deadzone);
     put16(p + 22, c->stick_power); put16(p + 24, c->accel_multiplier);
     put16(p + 26, c->accel_start_dps); put16(p + 28, c->accel_end_dps);
-    put32(p + 30, c->buttons); p[34] = c->stick_blend;
-    p[35] = c->profile_source; p[36] = c->profile_mask;
+    put32(p + 30, c->buttons);
+    p[34] = (uint8_t)((c->stick_blend & 1u) | (c->fire_bias_half_dps << 1));
+    p[35] = (uint8_t)((c->profile_source & 3u) | (c->fire_ramp_50ms << 2));
+    p[36] = c->profile_mask;
     p[37] = c->release_threshold; put16(p + 38, c->ads_multiplier);
 }
 
@@ -75,6 +77,7 @@ void gyro_reset_stream(bool forget_calibration)
     motion.active = motion.held = motion.qualified = motion.latched = false;
     motion.toggle_armed = false;
     motion.trigger_held = motion.ads_held = false;
+    motion.fire_held = false; motion.fire_since = 0;
     motion.stick_moving = false;
     motion.connected = motion.timestamp_valid = false;
     motion.selected_profile = 255;
@@ -108,13 +111,15 @@ static bool decode(const uint8_t *p, uint16_t len, struct gyro_config *result)
         .stick_deadzone = u16(p + 20), .stick_power = u16(p + 22),
         .accel_multiplier = u16(p + 24), .accel_start_dps = u16(p + 26),
         .accel_end_dps = u16(p + 28), .buttons = u32(p + 30),
-        .stick_blend = p[34],
-        .profile_source = p[35], .profile_mask = p[36],
+        .stick_blend = p[34] & 1u,
+        .profile_source = p[35] & 3u, .profile_mask = p[36],
+        .fire_bias_half_dps = p[34] >> 1, .fire_ramp_50ms = p[35] >> 2,
         .release_threshold = p[0] == 1 ? p[4] : p[37],
         .ads_multiplier = p[0] == 1 ? 100 : u16(p + 38),
     };
+    if (p[0] == 1 && (p[34] > 1 || p[35] > 2)) return false;
     if (c.output > GYRO_RIGHT_STICK || c.activation > GYRO_HOLD_OFF ||
-        c.trigger > 2 || !c.threshold || (c.flags & ~63u) ||
+        c.trigger > 2 || !c.threshold || (c.flags & ~127u) ||
         c.horizontal_axis > GYRO_AXIS_PLAYER_SPACE || c.smoothing_ms > 100 || c.hold_ms > 3000 ||
         !c.sensitivity_x || c.sensitivity_x > 10000 ||
         !c.sensitivity_y || c.sensitivity_y > 10000 ||
@@ -404,6 +409,9 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     motion.trigger_held = cfg.trigger && raw[3 + cfg.trigger] >=
         (motion.trigger_held ? cfg.release_threshold : cfg.threshold);
     motion.ads_held = raw[4] >= (motion.ads_held ? cfg.release_threshold : cfg.threshold);
+    bool fire = raw[5] >= (motion.fire_held ? cfg.release_threshold : cfg.threshold);
+    if (fire && !motion.fire_held) motion.fire_since = host_us;
+    motion.fire_held = fire;
     float uncorrected[3];
     for (int i = 0; i < 3; i++) {
         motion.raw[i] = i16(raw + 15 + i * 2);
@@ -445,6 +453,16 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
                   (cfg.activation == GYRO_TOGGLE && motion.latched) ||
                   (cfg.activation == GYRO_HOLD_OFF && !qualified);
     active = active && allowed && cfg.output != GYRO_OFF && !calibrating && !motion.paused;
+    /* Optional generic fire bias: while R2 is held and the mapping is active,
+     * add a constant downward virtual hand speed to the vertical axis. It is
+     * applied after the invert flags so "down" never flips, and it is scaled
+     * like real motion (sensitivity, ADS, fine multiplier). */
+    float fire_bias = 0;
+    if (active && (cfg.flags & GYRO_FIRE_BIAS) && motion.fire_held) {
+        float ramp_us = cfg.fire_ramp_50ms * 50000.0f;
+        float f = ramp_us > 0 ? clamp((host_us - motion.fire_since) / ramp_us, 0, 1) : 1;
+        fire_bias = cfg.fire_bias_half_dps * 0.5f * f;
+    }
     if (allowed && cfg.output && (cfg.flags & GYRO_SUPPRESS))
         gyro_suppress_buttons(out, cfg.buttons | (cfg.trigger ? 1u << (5 + cfg.trigger) : 0));
 
@@ -463,7 +481,8 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     bool was_moving = motion.stick_moving;
     /* A wider entry threshold avoids repeatedly lifting resting noise over the
      * game's deadzone. Returning to quiet also discards the filter's tail. */
-    motion.stick_moving = stick_output && speed > noise * (was_moving ? 1.0f : 1.5f);
+    motion.stick_moving = stick_output &&
+        (speed > noise * (was_moving ? 1.0f : 1.5f) || fire_bias > 0);
     float smooth_us = cfg.smoothing_ms * 1000.0f;
     if ((cfg.flags & GYRO_ADAPTIVE_SMOOTH) && smooth_us > 0) {
         float low = fmaxf(noise * 2.0f, 1.5f);
@@ -475,10 +494,11 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     }
     float alpha = smooth_us ? motion.dt_us / (motion.dt_us + smooth_us) : 1;
     for (int i = 0; i < 2; i++) {
+        float gain = (motion.ads_held ? cfg.ads_multiplier / 100.0f : 1.0f) *
+                     (motion.fine_multiplier / 100.0f);
         float target = hand[i] * tighten * acceleration *
-                       (i == 0 ? cfg.sensitivity_x : cfg.sensitivity_y) / 100.0f *
-                       (motion.ads_held ? cfg.ads_multiplier / 100.0f : 1.0f) *
-                       (motion.fine_multiplier / 100.0f);
+                       (i == 0 ? cfg.sensitivity_x : cfg.sensitivity_y) / 100.0f * gain;
+        if (i == 1) target += fire_bias * cfg.sensitivity_y / 100.0f * gain;
         /* Reset history on activation so the previous aiming session cannot
          * leak a tail into the next one. The first packet has no integration. */
         if (!active || (stick_output && !motion.stick_moving))

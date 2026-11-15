@@ -499,6 +499,71 @@ static void test_auto_bias_player_space_and_adaptive(void)
     reboot_cmd[62] = 42;
     assert(dongle_control_command(0xF6, reboot_cmd, 63) == DONGLE_RESET);
 }
+static void fire_run(int ticks)
+{
+    for (int i = 0; i < ticks; i++) tick(10000, false);
+}
+static int fire_pending_y(void)
+{
+    int8_t dx, dy; gyro_mouse_peek(&dx, &dy);
+    assert(dx == 0);
+    return dy;
+}
+static void test_generic_fire_bias(void)
+{
+    /* 1 count/deg, no deadzone or smoothing: 10 deg/s virtual bias = 10 counts/s. */
+    const int bias = 20 << 1; /* 10.0 deg/s in the packed p[34] bits1-7 */
+    uint8_t cfg[40], back[40];
+
+    /* Disabled flag: R2 alone adds nothing. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[34] = bias; p[5] = 200;
+    assert(gyro_set_config(cfg, 40)); tick(1000, false); fire_run(100);
+    assert(fire_pending_y() == 0);
+
+    /* Enabled, trigger below threshold: nothing. Held: ~10 counts after 1 s, downward. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[5] = GYRO_FIRE_BIAS; cfg[34] = bias;
+    assert(gyro_set_config(cfg, 40)); p[5] = 10; tick(1000, false); fire_run(100);
+    assert(fire_pending_y() == 0);
+    p[5] = 200; fire_run(100);
+    int y = fire_pending_y(); assert(y >= 9 && y <= 10);
+
+    /* Release stops accumulation; consumed output stays at zero afterwards. */
+    p[5] = 0; tick(10000, false);
+    gyro_mouse_consume(0, (int8_t)fire_pending_y());
+    fire_run(50); assert(fire_pending_y() == 0);
+
+    /* Vertical invert never flips the bias direction. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[5] = GYRO_FIRE_BIAS | GYRO_INVERT_Y; cfg[34] = bias;
+    assert(gyro_set_config(cfg, 40)); p[5] = 200; tick(1000, false); fire_run(100);
+    y = fire_pending_y(); assert(y >= 9 && y <= 10);
+
+    /* Ramp of 1000 ms integrates a triangle: about 5 counts after 1 s. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[5] = GYRO_FIRE_BIAS; cfg[34] = bias; cfg[35] = 20 << 2;
+    assert(gyro_set_config(cfg, 40)); p[5] = 200; tick(1000, false); fire_run(100);
+    y = fire_pending_y(); assert(y >= 4 && y <= 6);
+
+    /* Sensitivity scales like real motion; gating respects mapping activation. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[5] = GYRO_FIRE_BIAS; cfg[34] = bias;
+    put16(cfg + 12, 200); assert(gyro_set_config(cfg, 40)); p[5] = 200; tick(1000, false); fire_run(100);
+    y = fire_pending_y(); assert(y >= 19 && y <= 20);
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[1] = GYRO_OFF; cfg[5] = GYRO_FIRE_BIAS; cfg[34] = bias;
+    assert(gyro_set_config(cfg, 40)); p[5] = 200; tick(1000, false); fire_run(100);
+    assert(fire_pending_y() == 0);
+
+    /* Right-stick output pushes the stick downward even with a perfectly still controller. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[1] = GYRO_RIGHT_STICK; cfg[5] = GYRO_FIRE_BIAS; cfg[34] = bias;
+    put16(cfg + 18, 360); put16(cfg + 22, 100); assert(gyro_set_config(cfg, 40));
+    p[5] = 200; tick(1000, false); fire_run(10);
+    assert(out[3] > 128 && out[2] == 128);
+    p[5] = 0; fire_run(5); assert(out[3] == 128);
+
+    /* Wire format: round trip and compatibility rules. */
+    setup(); memcpy(cfg, c, sizeof(cfg)); cfg[5] = GYRO_FIRE_BIAS; cfg[34] = (127 << 1) | 1; cfg[35] = (63 << 2) | 2; cfg[36] = 1;
+    assert(gyro_set_config(cfg, 40)); gyro_get_config(back); assert(!memcmp(cfg, back, 40));
+    memcpy(cfg, c, sizeof(cfg)); cfg[5] = 128; assert(!gyro_validate_config(cfg, 40));
+    memcpy(cfg, c, sizeof(cfg)); cfg[0] = 1; cfg[37] = cfg[38] = cfg[39] = 0; cfg[34] = bias;
+    assert(!gyro_validate_config(cfg, 40)); /* v1 had no packed bits */
+}
 int main(void)
 {
     setbuf(stdout, NULL);
@@ -522,5 +587,6 @@ int main(void)
     puts("calibration timeout/retry"); test_calibration_timeout_and_retry();
     puts("persistent calibration"); test_persisted_calibration();
     puts("auto bias/player space/adaptive"); test_auto_bias_player_space_and_adaptive();
-    puts("gyro: 20 test groups passed"); return 0;
+    puts("generic fire bias"); test_generic_fire_bias();
+    puts("gyro: 21 test groups passed"); return 0;
 }

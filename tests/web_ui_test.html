@@ -6,6 +6,8 @@
 import { defaults, encodeConfig, decodeConfig, globalDefaults, encodeGlobal, decodeGlobal } from '../web/protocol.mjs';
 import {encodeMacro,decodeMacro,emptyRules,encodeRules} from '../web/macros.mjs';
 import {receiverDefaults,encodeReceiver,decodeReceiver,remapDefaults,encodeRemap,decodeRemap} from '../web/receiver-protocol.mjs';
+import {crc32} from '../web/zip-reader.mjs';
+import {encodePartitionTable,ROOT_MARKER,PT_ADDRESS} from '../web/dual-firmware.mjs';
 if(!new URLSearchParams(location.search).has('autorun'))await new Promise(resolve=>document.getElementById('runUITest').addEventListener('click',resolve,{once:true}));
 let receiver=receiverDefaults(),remap=[remapDefaults(),remapDefaults()],remapRead=0,remapActive=0,legacyAck=[0,0,0,0],receiverSaves=0;
 let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 2, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
@@ -142,6 +144,12 @@ try {
   location.hash='#config';await waitFor(()=>!$('config').hidden);change('output','2');change('stickPower','2');check($('curveUnits').textContent.includes('摇杆'),'stick response curve follows edited output');change('activation','2');const buttons=$('buttons').querySelector('[data-bit="22"]');buttons.checked=true;check($('activation').value==='2','toggle activation can bind independent rear button');
   $('autoBias').checked = true; $('autoBias').dispatchEvent(new Event('change', {bubbles:true}));
   $('adaptiveSmooth').checked = true; $('adaptiveSmooth').dispatchEvent(new Event('change', {bubbles:true}));
+  check($('fireBiasDps').closest('.field').hidden && $('fireBiasHint').hidden, 'fire bias options hidden until enabled');
+  $('fireBiasOn').checked = true; $('fireBiasOn').dispatchEvent(new Event('change', {bubbles:true}));
+  change('fireBiasDps', '10'); change('fireRampMs', '300');
+  check(!$('fireBiasDps').closest('.field').hidden && !$('fireRampMs').closest('.field').hidden && !$('fireBiasHint').hidden, 'fire bias options shown when enabled');
+  check($('configRuleSummary').textContent.includes('开火下压 10°/s'), 'fire bias appears in rule summary');
+  $('fireBiasOn').checked = false; $('fireBiasOn').dispatchEvent(new Event('change', {bubbles:true}));
   change('horizontal', '2');
   $('stickGamePresets').querySelector('[data-stick-tpl="codDynamic"]').click();
   check($('maxTurn').value === '420' && $('stickDeadzone').value === '7' && $('stickPower').value === '0.9', 'right-stick calibration wizard applies game template');
@@ -172,7 +180,108 @@ try {
   check($('bootVersion0').textContent==='G2.4'&&$('bootVersion1').textContent==='3.24H','boot manager renders both application versions');
   $('bootSlot1').click();await waitFor(()=>!bootOpened&&$('bootState').textContent.includes('切换回执成功'));
   check(bootSelected===1&&$('bootSlot0').disabled&&fake.opened,'boot manager switches only its own simulated interface');
-  hid.requestDevice=oldPicker;location.hash='#tester';await waitFor(()=>!$('tester').hidden);
+  hid.requestDevice=oldPicker;
+  // Auto-download Boot Manager, Gyro and Upstream firmware inside Dual Tools
+  const makeTestZip = entries => {
+    const locals = [], centrals = [];
+    let offset = 0;
+    for (const [name, data] of entries) {
+      const nb = new TextEncoder().encode(name), crc = crc32(data);
+      const l = new Uint8Array(30 + nb.length + data.length), lv = new DataView(l.buffer);
+      lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x800, true);
+      lv.setUint32(14, crc, true); lv.setUint32(18, data.length, true); lv.setUint32(22, data.length, true);
+      lv.setUint16(26, nb.length, true); l.set(nb, 30); l.set(data, 30 + nb.length);
+      locals.push(l);
+      const c = new Uint8Array(46 + nb.length), cv = new DataView(c.buffer);
+      cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x800, true);
+      cv.setUint32(16, crc, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+      cv.setUint16(28, nb.length, true); cv.setUint32(42, offset, true); c.set(nb, 46);
+      centrals.push(c); offset += l.length;
+    }
+    const cdSize = centrals.reduce((s, c) => s + c.length, 0);
+    const out = new Uint8Array(offset + cdSize + 22), ov = new DataView(out.buffer);
+    let p = 0;
+    for (const l of locals) { out.set(l, p); p += l.length; }
+    for (const c of centrals) { out.set(c, p); p += c.length; }
+    ov.setUint32(p, 0x06054b50, true); ov.setUint16(p + 8, entries.length, true); ov.setUint16(p + 10, entries.length, true);
+    ov.setUint32(p + 12, cdSize, true); ov.setUint32(p + 16, offset, true);
+    return out;
+  };
+  const makeBfnp = async ({ size, offset, marker = '', rootMarker = false }) => {
+    const out = new Uint8Array(size);
+    out.set(new TextEncoder().encode('BFNP'), 0);
+    const v = new DataView(out.buffer);
+    v.setUint32(120, 0x72cc0100, true); v.setUint32(124, offset, true); v.setUint32(132, size - offset, true);
+    if (rootMarker) out.set(new TextEncoder().encode(ROOT_MARKER), 0xFE0);
+    if (marker) out.set(new TextEncoder().encode(marker + '\0'), offset + 64);
+    out.set(new Uint8Array(await crypto.subtle.digest('SHA-256', out.subarray(offset))), 136);
+    v.setUint32(252, crc32(out.subarray(0, 252)), true);
+    return out;
+  };
+  const shaTag = async b => 'sha256:' + Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', b)), x => x.toString(16).padStart(2, '0')).join('');
+  const ptBin = encodePartitionTable({
+    version: 0, age: 0,
+    entries: [{ type: 0, device: 0, active: 0, name: 'FW', address: [0x10000, 0x210000], maxLength: [0x140000, 0x120000] }],
+  }, 16 + 36 + 4);
+  const boot2Bin = await makeBfnp({ size: 0x2400, offset: 0x2000 });
+  const mgrBin = await makeBfnp({ size: 0x2800, offset: 0x2000, rootMarker: true });
+  const gyroBin = await makeBfnp({ size: 0x1800, offset: 0x1000, marker: 'LCT616-DS5 3.18G2.4RC7' });
+  const upFsBin = await makeBfnp({ size: 0x1800, offset: 0x1000, marker: 'LCT616-DS5 3.24' });
+  const upHsBin = await makeBfnp({ size: 0x1800, offset: 0x1000, marker: 'LCT616-DS5 3.24H' });
+  const ini = new TextEncoder().encode('[boot2]\nfiledir = ./boot2.bin\naddress = 0x000000\n[partition]\nfiledir = ./partition.bin\naddress = 0xE000\n[FW]\nfiledir = ./ds5dongle-lctech616.bin\naddress = @partition\n');
+  const gyroZip = makeTestZip([['pkg/boot2.bin', boot2Bin], ['pkg/partition.bin', ptBin], ['pkg/flash_prog_cfg.ini', ini], ['pkg/ds5dongle-lctech616.bin', gyroBin]]);
+  const upZip = makeTestZip([['up/boot2.bin', boot2Bin], ['up/partition.bin', ptBin], ['up/flash_prog_cfg.ini', ini], ['up/ds5dongle-lctech616.bin', upFsBin], ['up/ds5dongle-lctech616-hs.bin', upHsBin]]);
+  const dlAssets = {
+    'ds5-boot-manager-lctech616-fs-experimental.bin': mgrBin,
+    'ds5dongle-lctech616-fs-test.zip': gyroZip,
+    'ds5dongle-bl618-lctech616-v3.24.zip': upZip,
+  };
+  const ghReleaseStubs = {
+    'lx8s8/ds5dongle-bl618-opensource-gyro': [{
+      tag_name: 'v3.18-g2.4-rc7', prerelease: true, published_at: '2026-11-15T12:00:00Z',
+      assets: [
+        { name: 'ds5-boot-manager-lctech616-fs-experimental.bin', size: mgrBin.length, digest: await shaTag(mgrBin), browser_download_url: 'https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc7/ds5-boot-manager-lctech616-fs-experimental.bin' },
+        { name: 'ds5dongle-lctech616-fs-test.zip', size: gyroZip.length, digest: await shaTag(gyroZip), browser_download_url: 'https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc7/ds5dongle-lctech616-fs-test.zip' },
+      ],
+    }],
+    'sqlCRT/ds5dongle-bl618-opensource': [{
+      tag_name: 'v3.24', prerelease: false, published_at: '2026-11-09T12:55:54Z',
+      assets: [
+        { name: 'ds5dongle-bl618-lctech616-v3.24.zip', size: upZip.length, digest: await shaTag(upZip), browser_download_url: 'https://github.com/sqlCRT/ds5dongle-bl618-opensource/releases/download/v3.24/ds5dongle-bl618-lctech616-v3.24.zip' },
+      ],
+    }],
+  };
+  const origFetch = window.fetch;
+  window.fetch = async (url, init) => {
+    const s = String(url);
+    if (s === '/api/local') return new Response(JSON.stringify({ application: 'DS5 Control Center', token: 'mocktok' }), { status: 200 });
+    if (s.startsWith('/api/download?')) {
+      const q = new URLSearchParams(s.split('?')[1]);
+      const data = dlAssets[q.get('name')];
+      if (!data) return new Response('missing', { status: 404 });
+      return new Response(data, { status: 200 });
+    }
+    for (const [repo, list] of Object.entries(ghReleaseStubs)) {
+      if (s.startsWith(`https://api.github.com/repos/${repo}/releases`)) return new Response(JSON.stringify(list), { status: 200 });
+    }
+    return origFetch(url, init);
+  };
+  try {
+    $('dualToolsDetails').open = true;
+    change('dualOp', 'install');
+    $('dualAutoAll').click();
+    await waitFor(() => !$('dualAutoAll').disabled && $('dualMessage').textContent.includes('全套文件已下载'));
+    check($('dualMgrSummary').textContent.includes('SHA256 验证通过'), 'dual auto-download populates and validates Boot Manager');
+    check($('dualGyroVer').value === '3.18G2.4RC7' && $('dualUpVer').value === '3.24', 'dual auto-download populates gyro and upstream versions');
+    check(!$('dualUpVariantField').hidden && $('dualUpVariant').options.length === 2, 'upstream multi-variant ZIP reveals FS/HS selector');
+    change('dualOp', 'slot');
+    change('dualSlotTarget', '1');
+    change('dualSlotUsb', 'hs');
+    $('dualAutoSlot').click();
+    await waitFor(() => !$('dualAutoSlot').disabled && $('dualSlotVersion').value === '3.24H');
+    check($('dualSlotVersion').value === '3.24H' && $('dualSlotSummary').textContent.includes('ds5dongle-lctech616-hs.bin'), 'slot auto-download fetches upstream repo and selects matching HS variant');
+  } finally { window.fetch = origFetch; }
+  location.hash='#tester';await waitFor(()=>!$('tester').hidden);
   $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');
   fake.vendorId=0x1209;fake.productId=1;
   $('connect').click(); await ready(); check(!$('identityWarning').hidden,'private test identity is clearly identified');

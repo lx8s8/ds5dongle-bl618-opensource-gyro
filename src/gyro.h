@@ -15,7 +15,8 @@ enum { GYRO_OFF, GYRO_MOUSE, GYRO_RIGHT_STICK };
 enum { GYRO_ALWAYS, GYRO_HOLD, GYRO_TOGGLE, GYRO_HOLD_OFF };
 enum { GYRO_AXIS_YAW, GYRO_AXIS_ROLL, GYRO_AXIS_PLAYER_SPACE };
 enum { GYRO_INVERT_X = 1, GYRO_INVERT_Y = 2, GYRO_SUPPRESS = 4,
-       GYRO_REQUIRE_ALL = 8, GYRO_AUTO_BIAS = 16, GYRO_ADAPTIVE_SMOOTH = 32 };
+       GYRO_REQUIRE_ALL = 8, GYRO_AUTO_BIAS = 16, GYRO_ADAPTIVE_SMOOTH = 32,
+       GYRO_FIRE_BIAS = 64 };
 enum { GYRO_STATUS_CONNECTED = 1, GYRO_STATUS_ACTIVE = 2,
        GYRO_STATUS_CALIBRATING = 4, GYRO_STATUS_CALIBRATED = 8,
        GYRO_STATUS_FACTORY = 16, GYRO_STATUS_CAL_FAILED = 32,
@@ -32,11 +33,16 @@ struct gyro_config {
     uint16_t noise_dps, max_turn_dps, stick_deadzone, stick_power;
     uint16_t accel_multiplier, accel_start_dps, accel_end_dps;
     uint32_t buttons;
-    uint8_t stick_blend; /* 0 additive, 1 replace while active */
-    uint8_t profile_source; /* 0 any, 1 Edge native, 2 dongle remap */
+    uint8_t stick_blend; /* 0 additive, 1 replace while active (wire p[34] bit0) */
+    uint8_t profile_source; /* 0 any, 1 Edge native, 2 dongle remap (wire p[35] bits0-1) */
     uint8_t profile_mask;   /* native: triangle/square/cross/circle; dongle: 0/1 */
     uint8_t release_threshold;
     uint16_t ads_multiplier; /* L2 sensitivity /100, independent of gate */
+    /* Optional generic "hold R2 -> constant downward bias" for offline/testing
+     * use. Packed into spare bits: p[34] bits1-7 = half deg/s (0..63.5 deg/s),
+     * p[35] bits2-7 = ramp time in 50 ms steps (0..3150 ms). Only used when
+     * GYRO_FIRE_BIAS is set; no per-weapon data exists in the firmware. */
+    uint8_t fire_bias_half_dps, fire_ramp_50ms;
 };
 
 /* Pure C engine; one owner (usb_task). Units on wire: sensitivity, mouse_cpd,

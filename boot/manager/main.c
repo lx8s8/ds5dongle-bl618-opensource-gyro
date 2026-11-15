@@ -6,6 +6,7 @@
 #include "bflb_mtimer.h"
 #include "bflb_sec_sha.h"
 #include "bflb_irq.h"
+#include "bflb_l1c.h"
 #include <string.h>
 
 static int read_flash(void*c,uint32_t a,uint8_t*p,size_t n){(void)c;return bflb_flash_read(a,p,n);}
@@ -14,26 +15,31 @@ static int write_flash(void*c,uint32_t a,const uint8_t*p,size_t n){(void)c;retur
 static const bm_flash flash={NULL,read_flash,erase_flash,write_flash};
 static bm_record record;
 static uint8_t valid_images;
+/* SEC_ENG SHA DMA and flash reads here must bypass write-back D-Cache. */
+static uint8_t sha_buf[2048] __attribute__((section(".noncacheable"),aligned(32)));
+static struct bflb_sha256_ctx_s sha_ctx __attribute__((section(".noncacheable"),aligned(32)));
+static uint8_t sha_digest[32] __attribute__((section(".noncacheable"),aligned(32)));
 
 static bool image_ok(const bm_image*im){
- uint8_t header[256],digest[32],buffer[2048] __attribute__((aligned(32)));
- if(read_flash(NULL,im->address,header,sizeof header)||memcmp(header,"BFNP",4))return false;
+ if(read_flash(NULL,im->address,sha_buf,256)||memcmp(sha_buf,"BFNP",4))return false;
  /* Only ordinary, unsigned, unencrypted, single-segment XIP applications with
   * their original 4 KiB header are accepted. Arbitrary binaries are rejected. */
- uint32_t flags=header[120]|header[121]<<8|header[122]<<16|((uint32_t)header[123]<<24);
- uint32_t offset=header[124]|header[125]<<8|header[126]<<16|((uint32_t)header[127]<<24);
+ uint32_t flags=sha_buf[120]|sha_buf[121]<<8|sha_buf[122]<<16|((uint32_t)sha_buf[123]<<24);
+ uint32_t offset=sha_buf[124]|sha_buf[125]<<8|sha_buf[126]<<16|((uint32_t)sha_buf[127]<<24);
  if((flags&0xF)||!(flags&(1u<<8))||offset!=0x1000)return false;
- struct bflb_device_s*sha=bflb_device_get_by_name("sha");struct bflb_sha256_ctx_s ctx;
- if(!sha)return false;bflb_sha_init(sha,SHA_MODE_SHA256);bflb_sha256_start(sha,&ctx);
- for(uint32_t pos=0;pos<im->image_length;){uint32_t n=im->image_length-pos;if(n>sizeof buffer)n=sizeof buffer;
-  if(read_flash(NULL,im->address+pos,buffer,n)||bflb_sha256_update(sha,&ctx,buffer,n))return false;pos+=n;}
- bflb_sha256_finish(sha,&ctx,digest);
- return !memcmp(digest,im->sha256,32);
+ struct bflb_device_s*sha=bflb_device_get_by_name("sha");
+ if(!sha)return false;memset(&sha_ctx,0,sizeof sha_ctx);
+ bflb_sha_init(sha,SHA_MODE_SHA256);bflb_sha256_start(sha,&sha_ctx);
+ for(uint32_t pos=0;pos<im->image_length;){uint32_t n=im->image_length-pos;if(n>sizeof sha_buf)n=sizeof sha_buf;
+  if(read_flash(NULL,im->address+pos,sha_buf,n)||bflb_sha256_update(sha,&sha_ctx,sha_buf,n))return false;pos+=n;}
+ bflb_sha256_finish(sha,&sha_ctx,sha_digest);
+ return !memcmp(sha_digest,im->sha256,32);
 }
 static bool boot(uint8_t slot,bool usb){
  if(!(valid_images&(1u<<slot))||!bm_select(&flash,slot,&record)||!bm_partition_select(&flash,slot))return false;
  if(usb){bflb_mtimer_delay_ms(100);bm_usb_stop();bflb_mtimer_delay_ms(20);}
- bflb_irq_save();bflb_flash_jump_app(record.image[slot].address+0x1000);
+ bflb_irq_save();bflb_l1c_dcache_disable();bflb_l1c_icache_disable();
+ bflb_flash_jump_app(record.image[slot].address+0x1000);
  for(;;){}
 }
 static void publish(bool installed,uint8_t cmd,uint8_t result,uint8_t sequence){

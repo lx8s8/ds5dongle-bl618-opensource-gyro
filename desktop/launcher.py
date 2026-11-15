@@ -32,11 +32,15 @@ MAX_DOWNLOAD = 8 * 1024 * 1024
 SAFE_COMPONENT = re.compile(r'^[A-Za-z0-9._-]{1,100}$')
 
 
+def allowed_asset(name):
+    return bool(name) and (name.endswith('.zip') or (name.startswith('ds5-boot-manager-') and name.endswith('.bin')))
+
+
 def release_url(query):
-    """Only ZIPs attached to releases of the two known repositories may be fetched."""
+    """Only release ZIPs and boot-manager binaries of the two known repositories may be fetched."""
     values = {k: v[0] for k, v in parse_qs(query).items() if len(v) == 1}
     repo, tag, name = values.get('repo'), values.get('tag'), values.get('name')
-    if repo not in REPOSITORIES or not name or not name.endswith('.zip'):
+    if repo not in REPOSITORIES or not allowed_asset(name):
         return None
     for part in (tag, name):
         if not part or '..' in part or not SAFE_COMPONENT.match(part):
@@ -135,7 +139,7 @@ class Handler(SimpleHTTPRequestHandler):
         finally:
             self.server.download_lock.release()
         self.send_response(200)
-        self.send_header('Content-Type', 'application/zip')
+        self.send_header('Content-Type', 'application/octet-stream' if url.endswith('.bin') else 'application/zip')
         self.send_header('Content-Length', str(len(data)))
         self.end_headers()
         self.wfile.write(data)

@@ -105,8 +105,11 @@ class NativeLauncherTests(unittest.TestCase):
         self.assertEqual(self.request(good, 'POST', {'Origin': self.origin, 'X-Session-Token': 'wrong'})[0], 403)
         auth = {'Origin': self.origin, 'X-Session-Token': json.loads(self.request('/api/local')[2])['token']}
         for bad in ['repo=evil%2Frepo&tag=v1&name=a.zip', 'repo=' + repo + '&tag=..%2Fx&name=a.zip',
-                    'repo=' + repo + '&tag=v1&name=a.exe', 'repo=' + repo + '&tag=v1%2F..&name=a.zip', 'tag=v1&name=a.zip']:
+                    'repo=' + repo + '&tag=v1&name=a.exe', 'repo=' + repo + '&tag=v1&name=other.bin',
+                    'repo=' + repo + '&tag=v1%2F..&name=a.zip', 'tag=v1&name=a.zip']:
             self.assertEqual(self.request('/api/download?' + bad, 'POST', auth)[0], 400, bad)
+        mgr = '/api/download?repo=' + repo + '&tag=v3.18-g2.4-rc6&name=ds5-boot-manager-lctech616-fs-experimental.bin'
+        self.assertEqual(self.request(mgr, 'POST')[0], 403)
         self.assertEqual(self.request(good)[0], 404)
 
     def test_rejects_duplicate_host_and_large_headers(self):

@@ -208,7 +208,7 @@ function profileChoices(mask = 0) {
   names.forEach((name, i) => { const label = document.createElement('label'); label.className = 'button-choice'; const input = document.createElement('input'); input.type = 'checkbox'; input.dataset.profile = i; input.checked = !!(mask & (1 << i)); label.append(input, document.createTextNode(name)); box.append(label); });
 }
 $('profileSource').onchange = () => profileChoices();
-const flagCheckIds = ['invertX', 'invertY', 'suppress', 'allButtons', 'autoBias', 'adaptiveSmooth'];
+const flagCheckIds = ['invertX', 'invertY', 'suppress', 'allButtons', 'autoBias', 'adaptiveSmooth', 'fireBiasOn'];
 function render(c) {
   fields.forEach(f => { $(f.id).value = c[f.id]; }); setMask($('buttons'), c.buttons);
   flagCheckIds.forEach((id, bit) => { if ($(id)) $(id).checked = !!(c.flags & (1 << bit)); }); profileChoices(c.profiles);
@@ -674,6 +674,10 @@ function updateConfigVisibility(c){
  fieldWrappers.accel.hidden=!vis.active;
  fieldWrappers.accelStart.hidden=!vis.usesAccelRange;
  fieldWrappers.accelEnd.hidden=!vis.usesAccelRange;
+ const fireOn=vis.active&&!!$('fireBiasOn')?.checked;
+ fieldWrappers.fireBiasDps.hidden=!fireOn;
+ fieldWrappers.fireRampMs.hidden=!fireOn;
+ if($('fireBiasHint'))$('fireBiasHint').hidden=!fireOn;
  $('axisHelp').hidden=!vis.active;
  $('gyroGateBlock').hidden=!vis.usesGate;
  $('gyroFlagChecks').hidden=!vis.active;
@@ -743,12 +747,12 @@ macroUI=initMacroUI({transport:()=>transport,action,message,download,getLive:()=
 receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
 tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);},getStickConfig:()=>reportedProfiles[activeSlot]||defaults()});
 const flasher=initFlasher();
-releaseUI=initReleases({loadPackage:flasher.load,notify:text=>message(text)});
+const dualUI=initDualFirmware();
+releaseUI=initReleases({loadPackage:flasher.load,loadBootManager:dualUI.loadManagerSource,notify:text=>message(text)});
 initBootManager({enterManager:async()=>{
  if(!device?.opened)throw new Error('请先连接体感接收器；运行上游原版时请用上电按键进入管理器');
  try{await transport.legacy(0xF6,4);}catch{throw new Error('当前固件或设备未提供软件进入入口；请使用上电按键。单固件设备无需此操作。');}
 }});
-initDualFirmware();
 for(let i=0;i<4;i++){const button=document.createElement('button');button.className='profile-chip';button.type='button';const title=document.createElement('strong');title.textContent='配置 '+(i+1);button.append(title,document.createElement('span'));button.onclick=()=>{ $('editSlot').value=i;$('editSlot').dispatchEvent(new Event('change'));};$('profileStrip').append(button);}
 $('settings').addEventListener('input',refreshConfiguration);$('settings').addEventListener('change',refreshConfiguration);$('curveSpeed').oninput=$('curveMax').onchange=refreshConfiguration;
 $('curveExport').onclick=()=>{try{const c=formConfig(),rows=['hand_dps,mouse_x_counts_s,mouse_y_counts_s,stick_x,stick_y,mouse_x_ads,stick_x_ads'];for(let s=0;s<=Number($('curveMax').value);s++)rows.push([s,mouseSpeed(c,s,'x'),mouseSpeed(c,s,'y'),stickPosition(c,s,'x'),stickPosition(c,s,'y'),mouseSpeed(c,s,'x',true),stickPosition(c,s,'x',true)].join(','));download('ds5-mapping-curve.csv',rows.join('\n'),'text/csv');}catch(e){message(e.message,true);}};
