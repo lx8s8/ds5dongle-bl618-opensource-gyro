@@ -241,7 +241,7 @@
 <pre id="flashLog" class="mono" hidden></pre>
 <p class="hint">写入后会读回 SHA256 校验，校验失败不会重启。只擦写所选区域，不做整片擦除，设备内保存的设置通常保留，仍建议先导出配置。已安装双固件启动管理器的设备请使用下方“双固件切换与维护”进行分槽更新或卸载。使用桌面应用（Windows/macOS 启动器）可在版本卡片一键下载并填入；仅用纯浏览器访问时请先手动下载 ZIP。刷写时不要拔线或关闭页面。</p></div>
 <div class="settings-card" id="bootManager"><h3>双固件切换与维护 · 实验性</h3>
-<p class="notice warning">启动管理器原型尚待真机验收，普通单固件不包含启动管理器。日常手柄保持 Sony 身份；切换或维护前先保存需保留的设置。</p>
+<p class="notice warning">双固件管理器为实验功能，目前仅在 LCTech 616 / macOS Chrome 上完成基本真机验证。管理器使用不唯一的 1209:0001 私下测试 USB 身份，仅用于私人测试，不能随设备销售或分发；普通单固件不包含管理器。切换或维护前请备份需保留的数据。</p>
 <p id="bootState" role="status">未连接启动管理器</p>
 <div class="actions"><button id="bootEnter" type="button">从体感固件进入管理器</button><button id="bootConnect" type="button">连接启动管理器</button><button id="bootDisconnect" type="button" disabled>断开管理器</button></div>
 <div class="two-col"><div><h4>体感固件</h4><p id="bootVersion0" class="mono">—</p><button id="bootSlot0" type="button" disabled>启动体感固件</button></div><div><h4>上游原版</h4><p id="bootVersion1" class="mono">—</p><button id="bootSlot1" type="button" disabled>启动上游原版</button></div></div>
