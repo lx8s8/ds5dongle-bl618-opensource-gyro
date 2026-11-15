@@ -12,7 +12,7 @@ static uint8_t files[16][4096], bindings[MACRO_BINDING_BYTES], keys[8], reply[63
 static size_t sizes[16];
 static unsigned saves;
 uint64_t bflb_mtimer_get_time_us(void) { return time_us; }
-void link_diag_snapshot(uint8_t *p) {
+void link_diag_snapshot(uint8_t p[LINK_DIAG_SIZE]) {
     memset(p, 0, LINK_DIAG_SIZE);
     memcpy(p, "BTL1", 4);
 }
