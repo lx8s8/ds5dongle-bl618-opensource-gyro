@@ -26,11 +26,22 @@ class NativeArchiveTests(unittest.TestCase):
         executable = base + ('/Contents/MacOS/DS5-Control-Center' if mac else '/DS5-Control-Center.exe')
         resources = base + ('/Contents/Resources/' if mac else '/')
         with zipfile.ZipFile(archive) as packed:
+            # ditto stores UTF-8 names without ZIP's UTF-8 flag. Finder decodes
+            # these correctly; Python uses CP437 unless we recover those bytes.
+            members = {}
+            for info in packed.infolist():
+                name = info.filename
+                if mac and not info.flag_bits & 0x800:
+                    try:
+                        name = name.encode('cp437').decode('utf-8')
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        pass
+                members[name] = info
             self.assertIsNone(packed.testzip())
             self.assertEqual(packed.read(executable), (folder / executable).read_bytes())
             self.assertGreater(packed.getinfo(executable).file_size, 1024)
             for name in ['LICENSE', 'NOTICE', '使用说明.md', 'DUAL_FIRMWARE_CN.md', 'GYRO_AXIS_ANALYSIS_CN.md']:
-                self.assertGreater(packed.getinfo(resources + name).file_size, 0)
+                self.assertGreater(members[resources + name].file_size, 0)
 
 
 class NativeLauncherTests(unittest.TestCase):
