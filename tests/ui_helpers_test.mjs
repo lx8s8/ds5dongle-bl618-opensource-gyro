@@ -2,13 +2,22 @@ import assert from 'node:assert/strict';
 import { decodeConfig, defaults, encodeConfig, globalDefaults } from '../web/protocol.mjs';
 import {
   GYRO_PRESETS,
+  STICK_GAME_TEMPLATES,
+  computeCircularityMetrics,
+  computePollingStats,
+  computeStickWizard,
   configsMatch,
   describeTriggerCondition,
+  diffConfigBundles,
+  diffGyroConfigs,
+  evaluateCompatibilityMode,
   formatModifierMask,
+  formatSlotTitle,
   getConfigVisibility,
   getMacroRuleVisibility,
   globalsMatch,
   isRemapRowModified,
+  normalizeSlotNames,
   summarizeGyroConfig,
   toggleModifierBit,
 } from '../web/ui-helpers.mjs';
@@ -83,6 +92,66 @@ for (const preset of GYRO_PRESETS) {
   assert.deepEqual(getMacroRuleVisibility({ gesture: 0 }), { usesHoldMs: false, usesTapMs: false });
   assert.deepEqual(getMacroRuleVisibility({ gesture: 2 }), { usesHoldMs: true, usesTapMs: false });
   assert.deepEqual(getMacroRuleVisibility({ gesture: 3 }), { usesHoldMs: false, usesTapMs: true });
+}
+
+{
+  // Stick calibration wizard & templates (Roadmap 10)
+  assert.equal(STICK_GAME_TEMPLATES.length >= 5, true);
+  for (const tpl of STICK_GAME_TEMPLATES) {
+    const cfg = { ...defaults(), output: 2, maxTurn: tpl.maxTurn, stickDeadzone: tpl.stickDeadzone, stickPower: tpl.stickPower, blend: tpl.blend };
+    assert.equal(configsMatch(cfg, decodeConfig(encodeConfig(cfg))), true);
+  }
+  const wiz = computeStickWizard({ gameDeadzonePct: 12, turn360Seconds: 1.5, curveType: 'classic' });
+  assert.equal(wiz.maxTurn, 240);
+  assert.equal(wiz.stickDeadzone, 11.4);
+  assert.equal(wiz.stickPower, 1.4);
+}
+
+{
+  // Custom slot names & bundle diffing (Roadmap 13)
+  assert.deepEqual(normalizeSlotNames([' Apex 步枪 ', '', null, '超长名称截断测试1234567890']), ['Apex 步枪', '', '', '超长名称截断测试12345678']);
+  assert.equal(formatSlotTitle(0, 'Apex 步枪'), '配置 1 · Apex 步枪');
+  assert.equal(formatSlotTitle(2, ''), '配置 3');
+
+  const base = defaults();
+  const next = { ...defaults(), output: 1, horizontal: 2, flags: 16 | 32, sx: 2.5 };
+  const changes = diffGyroConfigs(base, next);
+  assert.equal(changes.some(c => c.id === 'output'), true);
+  assert.equal(changes.some(c => c.id === 'horizontal'), true);
+  assert.equal(changes.some(c => c.id === 'autoBias'), true);
+  assert.equal(changes.some(c => c.id === 'adaptiveSmooth'), true);
+
+  const bundleDiff = diffConfigBundles(
+    { profiles: [base, base, base, base], settings: globalDefaults(), slotNames: ['', '', '', ''] },
+    { profiles: [next, base, base, base], settings: globalDefaults(), slotNames: ['主力步枪', '', '', ''] },
+  );
+  assert.equal(bundleDiff.hasChanges, true);
+  assert.equal(bundleDiff.slotDiffs[0].changes.length >= 5, true);
+  assert.equal(bundleDiff.slotDiffs[1].changes.length, 0);
+}
+
+{
+  // Stick circularity & polling rate stats (dstester enhancements)
+  const emptyCirc = computeCircularityMetrics(Array(36).fill(0));
+  assert.equal(emptyCirc.rmsErrorPct, null);
+  const idealCirc = computeCircularityMetrics(Array(36).fill(1.0));
+  assert.equal(idealCirc.covered, 36);
+  assert.equal(idealCirc.rmsErrorPct, 0);
+  const squareIsh = computeCircularityMetrics(Array(36).fill(1.08));
+  assert.equal(squareIsh.rmsErrorPct, 8);
+
+  const poll = computePollingStats([2, 2, 2, 2]);
+  assert.equal(poll.hz, 500);
+  assert.equal(poll.avgMs, 2);
+  assert.equal(poll.jitterMs, 0);
+}
+
+{
+  // Compatibility advisor (Roadmap 15)
+  assert.equal(evaluateCompatibilityMode({ outputMode: 1, gameNativeGyro: true, hostMapper: 'none' }).status, 'conflict');
+  assert.equal(evaluateCompatibilityMode({ outputMode: 2, gameNativeGyro: false, hostMapper: 'steam' }).status, 'conflict');
+  assert.equal(evaluateCompatibilityMode({ outputMode: 1, gameNativeGyro: false, hostMapper: 'consoleOnlyGame' }).status, 'warn');
+  assert.equal(evaluateCompatibilityMode({ outputMode: 1, gameNativeGyro: false, hostMapper: 'none' }).status, 'ok');
 }
 
 console.log('ui helpers assertions passed');

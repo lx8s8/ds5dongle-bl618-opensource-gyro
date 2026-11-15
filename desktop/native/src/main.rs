@@ -125,6 +125,7 @@ fn reply(stream: &mut TcpStream, code: u16, mime: &str, bytes: &[u8], head: bool
 }
 
 fn serve(mut stream: TcpStream, server: &Server) -> io::Result<()> {
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
     let mut bytes = Vec::new();

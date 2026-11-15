@@ -11,7 +11,7 @@ import { initFlasher } from './flash-ui.mjs';
 import { mouseSpeed, stickPosition } from './mapping-model.mjs';
 import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
 import { DiagnosticCapture } from './diagnostic-capture.mjs';
-import { GYRO_PRESETS, OUTPUT_NAMES, configsMatch, getConfigVisibility, globalsMatch, summarizeGyroConfig } from './ui-helpers.mjs';
+import { GYRO_PRESETS, OUTPUT_NAMES, STICK_GAME_TEMPLATES, computeStickWizard, configsMatch, diffConfigBundles, evaluateCompatibilityMode, formatSlotTitle, getConfigVisibility, globalsMatch, normalizeSlotNames, summarizeGyroConfig } from './ui-helpers.mjs';
 
 const $ = id => document.getElementById(id);
 let transport, receiverUI, tester, macroUI;
@@ -20,6 +20,27 @@ let drafts = Array.from({ length: 4 }, defaults);
 let cleanDrafts = Array.from({ length: 4 }, defaults);
 let cleanGlobal = globalDefaults();
 let reportedProfiles = [];
+let slotNames = ['', '', '', ''];
+let undoSnapshot = null, pendingImportBundle = null, replayTimer = null;
+try {
+  const savedNames = JSON.parse(localStorage.getItem('ds5-slot-names-v1') || '[]');
+  slotNames = normalizeSlotNames(savedNames);
+} catch {}
+function saveSlotNames() {
+  slotNames = normalizeSlotNames(slotNames);
+  try { localStorage.setItem('ds5-slot-names-v1', JSON.stringify(slotNames)); } catch {}
+}
+function pushUndoSnapshot() {
+  try {
+    drafts[editSlot] = readDraftConfig();
+    undoSnapshot = {
+      drafts: drafts.map(d => ({ ...d })),
+      settings: globalConfig(),
+      slotNames: [...slotNames],
+    };
+    if ($('undoProfileBtn')) $('undoProfileBtn').disabled = false;
+  } catch {}
+}
 const capture = new DiagnosticCapture();
 const deviceButtons = ['apply', 'save', 'read', 'defaults', 'calibrate', 'clearCalibration', 'disconnect', 'activateSlot', 'configCalibrate'];
 const actionNames = ['未设置', '下一配置', '上一配置', '指定配置', '体感开关', '静止校准', '按住精瞄'];
@@ -88,13 +109,61 @@ if ($('gyroPresets')) {
     const hint = document.createElement('span'); hint.textContent = preset.hint;
     btn.append(title, hint);
     btn.onclick = () => {
+      pushUndoSnapshot();
       drafts[editSlot] = preset.build();
       render(drafts[editSlot]);
       refreshConfiguration();
-      message(`已套用预设“${preset.label}”到配置 ${editSlot + 1}，请点击“应用”或“保存”`);
+      message(`已套用预设“${preset.label}”到${formatSlotTitle(editSlot, slotNames[editSlot])}，请点击“应用”或“保存”`);
     };
     $('gyroPresets').append(btn);
   }
+}
+if ($('stickGamePresets')) {
+  for (const tpl of STICK_GAME_TEMPLATES) {
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'preset-chip'; btn.dataset.stickTpl = tpl.id;
+    const title = document.createElement('strong'); title.textContent = tpl.label;
+    const hint = document.createElement('span'); hint.textContent = tpl.hint;
+    btn.append(title, hint);
+    btn.onclick = () => {
+      pushUndoSnapshot();
+      $('maxTurn').value = tpl.maxTurn;
+      $('stickDeadzone').value = tpl.stickDeadzone;
+      $('stickPower').value = tpl.stickPower;
+      $('blend').value = tpl.blend;
+      syncFieldControls();
+      refreshConfiguration();
+      message(`已填入“${tpl.label}”右摇杆曲线参数`);
+    };
+    $('stickGamePresets').append(btn);
+  }
+}
+function updateStickWizardPreview() {
+  if (!$('wizStickPreview')) return;
+  const res = computeStickWizard({
+    gameDeadzonePct: $('wizGameDeadzone')?.value,
+    turn360Seconds: $('wizTurn360Sec')?.value,
+    curveType: $('wizCurveType')?.value,
+  });
+  $('wizStickPreview').textContent = `推荐：满杆 ${res.maxTurn}°/s · 死区补偿 ${res.stickDeadzone}% · 指数 ${res.stickPower}`;
+  return res;
+}
+if ($('wizApplyStick')) {
+  ['wizGameDeadzone', 'wizTurn360Sec', 'wizCurveType'].forEach(id => {
+    if ($(id)) $(id).addEventListener('input', updateStickWizardPreview);
+    if ($(id)) $(id).addEventListener('change', updateStickWizardPreview);
+  });
+  updateStickWizardPreview();
+  $('wizApplyStick').onclick = () => {
+    pushUndoSnapshot();
+    const res = updateStickWizardPreview();
+    if (!res) return;
+    $('maxTurn').value = res.maxTurn;
+    $('stickDeadzone').value = res.stickDeadzone;
+    $('stickPower').value = res.stickPower;
+    syncFieldControls();
+    refreshConfiguration();
+    message(`已按向导填入：满杆 ${res.maxTurn}°/s、死区补偿 ${res.stickDeadzone}%、响应指数 ${res.stickPower}`);
+  };
 }
 choices($('buttons'));
 buttonNames.forEach((name, bit) => { const el = document.createElement('span'); el.textContent = name; el.dataset.bit = bit; $('liveButtons').append(el); });
@@ -139,16 +208,18 @@ function profileChoices(mask = 0) {
   names.forEach((name, i) => { const label = document.createElement('label'); label.className = 'button-choice'; const input = document.createElement('input'); input.type = 'checkbox'; input.dataset.profile = i; input.checked = !!(mask & (1 << i)); label.append(input, document.createTextNode(name)); box.append(label); });
 }
 $('profileSource').onchange = () => profileChoices();
+const flagCheckIds = ['invertX', 'invertY', 'suppress', 'allButtons', 'autoBias', 'adaptiveSmooth'];
 function render(c) {
   fields.forEach(f => { $(f.id).value = c[f.id]; }); setMask($('buttons'), c.buttons);
-  ['invertX', 'invertY', 'suppress', 'allButtons'].forEach((id, bit) => { $(id).checked = !!(c.flags & (1 << bit)); }); profileChoices(c.profiles);
+  flagCheckIds.forEach((id, bit) => { if ($(id)) $(id).checked = !!(c.flags & (1 << bit)); }); profileChoices(c.profiles);
   if ($('syncXY')) $('syncXY').checked = Math.abs(Number(c.sx) - Number(c.sy)) < 0.005;
+  if ($('slotCustomName')) $('slotCustomName').value = slotNames[editSlot] || '';
   syncFieldControls();
 }
 function readDraftConfig() {
   if ($('syncXY')?.checked) { $('sy').value = $('sx').value; syncFieldControls(); }
   const c = Object.fromEntries(fields.map(f => [f.id, Number($(f.id).value)]));
-  c.flags = ['invertX', 'invertY', 'suppress', 'allButtons'].reduce((m, id, bit) => m | ($(id).checked ? 1 << bit : 0), 0);
+  c.flags = flagCheckIds.reduce((m, id, bit) => m | ($(id)?.checked ? 1 << bit : 0), 0);
   c.buttons = readMask($('buttons')); c.profiles = c.profileSource ? [...$('profiles').querySelectorAll('input:checked')].reduce((m, e) => m | (1 << e.dataset.profile), 0) : 0;
   return c;
 }
@@ -192,7 +263,14 @@ async function action(fn) { if (busy) return; busy = true; controls(); try { awa
 async function receive(id) { if (!device?.opened) throw new Error('请先连接接收器'); return transport.read(id); }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let activeSlot = 255;
-function currentSlot(n) { activeSlot = n; $('currentSlot').textContent = n < 4 ? `当前配置：${n + 1}` : '当前配置：关闭'; refreshProfiles(); }
+function currentSlot(n) { activeSlot = n; $('currentSlot').textContent = n < 4 ? `当前配置：${n + 1}${slotNames[n] ? ` · ${slotNames[n]}` : ''}` : '当前配置：关闭'; refreshProfiles(); }
+if ($('slotCustomName')) {
+  $('slotCustomName').addEventListener('input', () => {
+    slotNames[editSlot] = String($('slotCustomName').value || '').trim().slice(0, 16);
+    saveSlotNames();
+    refreshProfiles();
+  });
+}
 async function command(cmd, value) {
   if (!device?.opened) throw new Error('请先连接接收器');
   const result = await transport.gyro(cmd, value ? cmd === 1 ? encodeConfig(value) : value : []);
@@ -233,7 +311,7 @@ async function close() {
   $('device').textContent = $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
   $('identityWarning').hidden = true;
   $('testProfile').textContent = '配置 — · Edge —';
-  ['interval', 'factory', 'calibration', 'stick'].forEach(id => { $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
+  ['interval', 'factory', 'calibration', 'stillness', 'stick'].forEach(id => { if ($(id)) $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
 }
 $('disconnect').onclick = () => action(async () => { await close(); message('已断开连接'); });
 if (navigator.hid) navigator.hid.addEventListener('disconnect', e => { if (e.device === device) close().then(()=>message('接收器已断开')).catch(err=>message(err.message,true)); });
@@ -278,11 +356,173 @@ function preset(ms) { $('output').value = Number($('output').value) || 1; $('act
 $('presetL2').onclick = () => preset(0); $('presetLong').onclick = () => preset(300);
 $('learn').onclick = () => { if (!live || !(live.flags & 1) || !live.buttons) return message('请连接接收器并按住需要设置的按键', true); $('trigger').value = 0; setMask($('buttons'), live.buttons); if ($('buttonPickerDetails')) $('buttonPickerDetails').open = true; syncFieldControls(); refreshConfiguration(); message('已读取按键'); };
 function download(name, text, type) { const url = URL.createObjectURL(new Blob([text], { type })), a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-$('export').onclick = () => action(async () => { drafts[editSlot] = formConfig(); download('ds5-gyro-config.json', JSON.stringify({ version: 2, profiles: drafts, settings: globalConfig() }, null, 2), 'application/json'); });
+$('export').onclick = () => action(async () => { drafts[editSlot] = formConfig(); download('ds5-gyro-config.json', JSON.stringify({ version: 2, profiles: drafts, settings: globalConfig(), slotNames }, null, 2), 'application/json'); });
+function renderImportDiff(bundle) {
+  pendingImportBundle = bundle;
+  drafts[editSlot] = readDraftConfig();
+  const diff = diffConfigBundles({ profiles: drafts, settings: globalConfig(), slotNames }, bundle);
+  applyImportedBundle(bundle, true);
+  if (!$('importDiffCard') || !$('importDiffList')) return;
+  const box = $('importDiffList');
+  box.replaceChildren();
+  for (const s of diff.slotDiffs) {
+    const row = document.createElement('div');
+    row.className = 'diff-item';
+    const title = document.createElement('strong');
+    title.textContent = s.name;
+    const detail = document.createElement('span');
+    detail.textContent = s.changes.length
+      ? s.changes.map(c => c.text).join('；')
+      : `无参数改动（${s.summaryAfter}）`;
+    row.append(title, detail);
+    box.append(row);
+  }
+  if (diff.globalChanged) {
+    const row = document.createElement('div');
+    row.className = 'diff-item';
+    const title = document.createElement('strong');
+    title.textContent = '全局切档与快捷键';
+    const detail = document.createElement('span');
+    detail.textContent = '包含切档来源、默认档位或快捷键组合更新';
+    row.append(title, detail);
+    box.append(row);
+  }
+  if ($('importDiffSummaryTag')) $('importDiffSummaryTag').textContent = diff.hasChanges ? `共 ${diff.totalChanges} 处变更` : '与当前草稿一致';
+  $('importDiffCard').hidden = false;
+}
+function applyImportedBundle(bundle, keepDiffOpen = false) {
+  if (!bundle) return;
+  pushUndoSnapshot();
+  drafts = bundle.profiles.map(p => ({ ...p }));
+  if (Array.isArray(bundle.slotNames)) {
+    slotNames = normalizeSlotNames(bundle.slotNames);
+    saveSlotNames();
+  }
+  renderGlobal(bundle.settings);
+  manualTouched = true;
+  render(drafts[editSlot]);
+  if (!keepDiffOpen && $('importDiffCard')) $('importDiffCard').hidden = true;
+  pendingImportBundle = null;
+  refreshConfiguration();
+  message('已导入配置并展示变更对比，请点击“应用”或“保存到设备”');
+}
+if ($('importConfirm')) $('importConfirm').onclick = () => { if ($('importDiffCard')) $('importDiffCard').hidden = true; message('已确认保留导入草稿，请点击“应用”或“保存到设备”'); };
+if ($('importCancel')) $('importCancel').onclick = () => { if ($('importDiffCard')) $('importDiffCard').hidden = true; if ($('undoProfileBtn') && !$('undoProfileBtn').disabled) $('undoProfileBtn').click(); else message('已关闭导入预览'); };
 $('import').onchange = e => action(async () => {
   const file = e.target.files[0]; if (!file) return; if (file.size > 65536) throw new Error('配置文件过大');
-  const bundle = importBundle(JSON.parse(await file.text())); drafts = bundle.profiles; renderGlobal(bundle.settings); manualTouched = true; render(drafts[editSlot]); e.target.value = ''; message('已导入配置，请保存到设备');
+  const bundle = importBundle(JSON.parse(await file.text()));
+  e.target.value = '';
+  renderImportDiff(bundle);
 });
+if ($('undoProfileBtn')) {
+  $('undoProfileBtn').onclick = () => {
+    if (!undoSnapshot) return;
+    drafts = undoSnapshot.drafts.map(d => ({ ...d }));
+    slotNames = normalizeSlotNames(undoSnapshot.slotNames);
+    saveSlotNames();
+    renderGlobal(undoSnapshot.settings);
+    render(drafts[editSlot]);
+    undoSnapshot = null;
+    $('undoProfileBtn').disabled = true;
+    refreshConfiguration();
+    message('已恢复到上次套用/导入前的草稿');
+  };
+}
+function initProfileLibrary() {
+  if (!$('librarySelect')) return;
+  const STORAGE_KEY = 'ds5-gyro-library-v1';
+  const defaultLibrary = () => [
+    {
+      name: 'PC 射击全能（玩家空间 + 精瞄）',
+      slotNames: ['常规关闭', '开镜玩家空间', '全程体感 L1暂停', '主机右摇杆'],
+      profiles: [
+        GYRO_PRESETS[0].build(),
+        GYRO_PRESETS.find(p => p.id === 'playerSpacePro').build(),
+        GYRO_PRESETS.find(p => p.id === 'alwaysMouse').build(),
+        GYRO_PRESETS.find(p => p.id === 'consoleStick').build(),
+      ],
+      settings: globalDefaults(),
+    },
+    {
+      name: '主机右摇杆多游戏包（Apex / CoD）',
+      slotNames: ['Apex 经典', 'Apex 线性', 'CoD 动态', '战地通用'],
+      profiles: [0, 1, 2, 4].map(idx => {
+        const tpl = STICK_GAME_TEMPLATES[idx];
+        return { ...GYRO_PRESETS.find(p => p.id === 'consoleStick').build(), maxTurn: tpl.maxTurn, stickDeadzone: tpl.stickDeadzone, stickPower: tpl.stickPower, blend: tpl.blend, flags: 16 | 32, horizontal: 2 };
+      }),
+      settings: globalDefaults(),
+    },
+  ];
+  let items = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    items = Array.isArray(parsed) && parsed.length ? parsed : defaultLibrary();
+  } catch { items = defaultLibrary(); }
+  function persist() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch {}
+    renderOptions();
+  }
+  function renderOptions() {
+    const sel = $('librarySelect');
+    const prev = sel.value;
+    sel.replaceChildren(...items.map((item, idx) => new Option(`${item.name}（${(item.slotNames || []).filter(Boolean).join('/') || '4 档'}）`, String(idx))));
+    if (prev && Number(prev) < items.length) sel.value = prev;
+    if ($('libraryCountTag')) $('libraryCountTag').textContent = `方案库 ${items.length} 套`;
+    if ($('libraryDelete')) $('libraryDelete').disabled = items.length <= 1;
+  }
+  renderOptions();
+  if ($('librarySave')) {
+    $('librarySave').onclick = () => {
+      try {
+        drafts[editSlot] = formConfig();
+        const name = String($('libraryName')?.value || '').trim() || `自定义方案 ${items.length + 1}`;
+        const entry = { name, slotNames: [...slotNames], profiles: drafts.map(d => ({ ...d })), settings: globalConfig() };
+        const existingIdx = items.findIndex(x => x.name === name);
+        if (existingIdx >= 0) items[existingIdx] = entry;
+        else items.push(entry);
+        if ($('libraryName')) $('libraryName').value = '';
+        persist();
+        $('librarySelect').value = String(existingIdx >= 0 ? existingIdx : items.length - 1);
+        message(`已将当前 4 档保存为方案“${name}”`);
+      } catch (e) { message(e.message, true); }
+    };
+  }
+  if ($('libraryApplySlot')) {
+    $('libraryApplySlot').onclick = () => {
+      const item = items[Number($('librarySelect').value)];
+      if (!item?.profiles?.[editSlot]) return;
+      pushUndoSnapshot();
+      drafts[editSlot] = { ...item.profiles[editSlot] };
+      if (item.slotNames?.[editSlot]) { slotNames[editSlot] = item.slotNames[editSlot]; saveSlotNames(); }
+      render(drafts[editSlot]);
+      refreshConfiguration();
+      message(`已将方案“${item.name}”的第 ${editSlot + 1} 档载入到当前编辑档`);
+    };
+  }
+  if ($('libraryApplyAll')) {
+    $('libraryApplyAll').onclick = () => {
+      const item = items[Number($('librarySelect').value)];
+      if (!item?.profiles) return;
+      pushUndoSnapshot();
+      drafts = item.profiles.map(p => ({ ...p }));
+      if (Array.isArray(item.slotNames)) { slotNames = normalizeSlotNames(item.slotNames); saveSlotNames(); }
+      if (item.settings) renderGlobal(item.settings);
+      render(drafts[editSlot]);
+      refreshConfiguration();
+      message(`已载入整套方案“${item.name}”`);
+    };
+  }
+  if ($('libraryDelete')) {
+    $('libraryDelete').onclick = () => {
+      if (items.length <= 1) return;
+      const idx = Number($('librarySelect').value);
+      const removed = items.splice(idx, 1)[0];
+      persist();
+      message(`已删除方案“${removed?.name || ''}”`);
+    };
+  }
+}
+initProfileLibrary();
 $('csv').onclick = () => { const rows = ['time_ms,dt_us,flags,pitch_dps,yaw_dps,roll_dps,filtered_x_dps,filtered_y_dps,stick_x,stick_y,buttons,edge_profile,dongle_profile', ...samples.map(s => [s.time, s.dt, s.flags, ...s.rates, ...s.filtered, ...s.stick, s.buttons, s.edgeProfile, s.dongleProfile].join(','))]; download('ds5-gyro-debug.csv', rows.join('\n'), 'text/csv'); };
 $('exportDiagnostics').onclick = () => { if (!metrics) return message('暂无诊断数据', true); download('ds5-gyro-diagnostics.json', JSON.stringify({ version: 3, firmware: $('firmware').textContent, time: new Date().toISOString(), metrics, reportedProfiles, featureSamples:samples, receiverTrace:macroUI?.snapshot(), capture:capture.snapshot() }), 'application/json'); };
 function draw() {
@@ -293,13 +533,65 @@ function draw() {
   ['#2671d9', '#258354', '#ae6418'].forEach((color, axis) => { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); history.forEach((s, i) => { const x = i / 179 * w, y = h / 2 - s.rates[axis] / scale * (h / 2 - 25); if (!i) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); });
 }
 function renderLive(s) {
-  $('testProfile').textContent = `配置 ${metrics ? metrics.active < 4 ? metrics.active + 1 : '关闭' : '—'} · Edge ${s.edgeProfile || '—'}`;
+  $('testProfile').textContent = `配置 ${metrics ? metrics.active < 4 ? formatSlotTitle(metrics.active, slotNames[metrics.active]) : '关闭' : '—'} · Edge ${s.edgeProfile || '—'}`;
   $('active').textContent = !(s.flags & 1) ? '等待输入' : s.flags & 4 ? '校准中' : s.flags & 2 ? '体感已开启' : '体感已关闭';
   $('interval').textContent = s.dt ? `${(s.dt / 1000).toFixed(2)} ms` : '—'; $('factory').textContent = s.flags & 16 ? '已应用' : '标称值';
-  $('calibration').textContent = s.flags & 4 ? `${s.progress}%` : s.flags & 32 ? '校准超时' : s.flags & 8 ? '已校准' : '未校准'; $('stick').textContent = usbStick ? usbStick.join(' / ') : '等待输入'; $('rates').textContent = s.rates.map(n => n.toFixed(2)).join(' / ');
+  $('calibration').textContent = s.flags & 4 ? `${s.progress}%` : s.flags & 32 ? '校准超时' : s.flags & 8 ? '已校准' : s.flags & 128 ? '自动已收敛' : '未校准';
+  if ($('stillness')) $('stillness').textContent = !(s.flags & 1) ? '—' : (s.flags & 64) ? ((s.flags & 128) ? '静止 · 自动跟踪' : '静止锁定') : '运动中';
+  $('stick').textContent = usbStick ? usbStick.join(' / ') : '等待输入'; $('rates').textContent = s.rates.map(n => n.toFixed(2)).join(' / ');
   for (const el of $('liveButtons').children) el.classList.toggle('on', !!(s.buttons & (1 << el.dataset.bit)));
   $('raw').textContent = `陀螺仪: ${s.raw.join(', ')}\n加速度: ${s.accel.join(', ')}\n零偏 °/s: ${s.bias.join(', ')}\n映射 °/s: ${s.filtered.join(', ')}\n鼠标待发: ${s.pending.join(', ')}\nEdge 档位: ${s.edgeProfile || '—'}\n接收器档位: ${s.dongleProfile + 1}\n报告: ${s.packets} · 校准样本: ${s.samples}`;
   if (s.flags & 1) { samples.push({ ...s, time: Date.now() }); if (samples.length > 600) samples.shift(); } draw();
+}
+function stopReplay() {
+  if (replayTimer) { clearInterval(replayTimer); replayTimer = null; }
+  if ($('replayStop')) $('replayStop').hidden = true;
+  if ($('replayStatus')) $('replayStatus').textContent = '待命';
+}
+if ($('replayStop')) $('replayStop').onclick = () => { stopReplay(); message('已停止诊断回放'); };
+if ($('replayFile')) {
+  $('replayFile').onchange = e => action(async () => {
+    const file = e.target.files[0]; if (!file) return;
+    stopReplay();
+    const doc = JSON.parse(await file.text());
+    e.target.value = '';
+    const frames = Array.isArray(doc?.featureSamples) && doc.featureSamples.length ? doc.featureSamples : null;
+    if (!frames) throw new Error('该诊断文件不包含可回放的传感器采样记录');
+    samples = [];
+    let idx = 0;
+    if ($('replayStop')) $('replayStop').hidden = false;
+    if ($('replayStatus')) $('replayStatus').textContent = `回放中 1/${frames.length}`;
+    message(`开始离线回放诊断记录（共 ${frames.length} 帧）`);
+    replayTimer = setInterval(() => {
+      if (idx >= frames.length) {
+        stopReplay();
+        if ($('replayStatus')) $('replayStatus').textContent = `回放完成 (${frames.length} 帧)`;
+        return;
+      }
+      const f = frames[idx++];
+      if (f && Array.isArray(f.rates)) {
+        usbStick = Array.isArray(f.stick) ? f.stick : [128, 128];
+        renderLive({
+          flags: f.flags ?? 1,
+          progress: f.progress ?? 0,
+          dt: f.dt ?? 2000,
+          raw: f.raw || [0, 0, 0],
+          accel: f.accel || [0, 8192, 0],
+          rates: f.rates,
+          filtered: f.filtered || [0, 0],
+          stick: usbStick,
+          pending: f.pending || [0, 0],
+          buttons: f.buttons ?? 0,
+          samples: f.samples ?? 0,
+          bias: f.bias || [0, 0, 0],
+          packets: f.packets ?? idx,
+          edgeProfile: f.edgeProfile ?? 0,
+          dongleProfile: f.dongleProfile ?? 0,
+        });
+      }
+      if ($('replayStatus')) $('replayStatus').textContent = `回放中 ${idx}/${frames.length}`;
+    }, 50);
+  });
 }
 function renderMetrics(m) {
   currentSlot(m.active);
@@ -347,11 +639,16 @@ function refreshProfiles(){
  if(!$('profileStrip'))return;
  const inactive=!!device&&activeSlot<4&&editSlot!==activeSlot;
  $('editNotice').hidden=!inactive;
- $('editNotice').textContent=inactive?`正在编辑配置 ${editSlot+1}，当前生效为配置 ${activeSlot+1}；此处修改作用于编辑档。`:'';
+ $('editNotice').textContent=inactive?`正在编辑 ${formatSlotTitle(editSlot, slotNames[editSlot])}，当前生效为 ${formatSlotTitle(activeSlot, slotNames[activeSlot])}；此处修改作用于编辑档。`:'';
  const chips=$('profileStrip').children;
  const curDraft=readDraftConfig();
  for(let i=0;i<4;i++){
+  const label=formatSlotTitle(i,slotNames[i]);
+  if($('editSlot')?.options[i])$('editSlot').options[i].textContent=label;
+  if($('manualSlot')?.options[i])$('manualSlot').options[i].textContent=label;
+  if($('copyTarget')?.options[i+1])$('copyTarget').options[i+1].textContent=label;
   const chip=chips[i];if(!chip)continue;
+  const titleEl=chip.querySelector('strong');if(titleEl)titleEl.textContent=label;
   const cfg=i===editSlot?curDraft:drafts[i];
   const dirty=!configsMatch(cfg,cleanDrafts[i]);
   chip.classList.toggle('active',i===activeSlot);chip.classList.toggle('editing',i===editSlot);chip.classList.toggle('dirty',dirty);chip.disabled=busy;
@@ -415,8 +712,23 @@ function refreshConfiguration(event){
    $('configRuleSummary').classList.add('warn');
   }
  }
+ if($('compatResult')){
+  const compat=evaluateCompatibilityMode({
+   outputMode:cur.output,
+   gameNativeGyro:Number($('compatGameGyro')?.value||0)===1,
+   hostMapper:$('compatHostMapper')?.value||'none',
+  });
+  $('compatResult').textContent=`${compat.title}：${compat.detail} ${compat.recommendation}`;
+  $('compatResult').classList.toggle('warn',compat.status!=='ok');
+  if($('compatStatusTag'))$('compatStatusTag').textContent=compat.status==='ok'?'无冲突':compat.status==='warn'?'需注意':'存在叠加冲突';
+ }
  if(!$('mappingCurve'))return;
- $('axisHelp').textContent=Number($('horizontal').value)===0?'Yaw：手柄平放时像转盘一样左右平转；左右侧倾主要落在 Roll。':'Roll：像方向盘一样左右侧倾，两侧一高一低；方向相反时使用“水平反转”。';
+ const hMode=Number($('horizontal').value);
+ $('axisHelp').textContent=hMode===2
+  ?'玩家空间（推荐）：结合三轴加速度计实时估计重力方向，无论握持俯仰角如何倾斜，水平转手腕都严格对应屏幕水平转向，彻底消除斜握串轴。'
+  :hMode===0
+   ?'Yaw：手柄平放时像转盘一样左右平转；左右侧倾主要落在 Roll。'
+   :'Roll：像方向盘一样左右侧倾，两侧一高一低；方向相反时使用“水平反转”。';
  try{
   const c=formConfig(),canvas=$('mappingCurve'),ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,pad=48,max=Number($('curveMax').value),fn=c.output===2?stickPosition:mouseSpeed;
   const yMax=c.output===2?1:Math.max(1,fn(c,max,'x'),fn(c,max,'y'),fn(c,max,'x',true),fn(c,max,'y',true));
@@ -446,6 +758,9 @@ try{if(localStorage.getItem('ds5-theme')==='dark')document.documentElement.datas
 themeLabel();
 $('themeToggle').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';themeLabel();try{localStorage.setItem('ds5-theme',dark?'dark':'light');}catch{}};
 window.addEventListener('hashchange',route);
+for(const link of document.querySelectorAll('.site-nav a, a.brand')){
+ link.addEventListener('click',()=>{setTimeout(route,0);});
+}
 cleanDrafts=drafts.map(d=>({...d}));cleanGlobal=globalDefaults();
 render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route(); initMouseTest(); refreshConfiguration();
 

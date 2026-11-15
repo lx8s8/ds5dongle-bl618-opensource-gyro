@@ -8,7 +8,7 @@ export const fields = [
   { id: 'releaseThreshold', label: '释放阈值 · 1–255', group: 'activation', offset: 37, min: 1, max: 255, default: 64 },
   { id: 'adsMultiplier', label: 'L2 瞄准倍率', group: 'motion', offset: 38, size: 2, scale: 100, min: .01, max: 4, step: .01, default: 1 },
   { id: 'hold', label: '长按延时 · ms', group: 'activation', offset: 8, size: 2, min: 0, max: 3000, default: 0 },
-  { id: 'horizontal', label: '水平转动轴', group: 'activation', offset: 6, options: ['Yaw · 左右转动', 'Roll · 左右侧倾'], default: 0 },
+  { id: 'horizontal', label: '水平转动轴', group: 'activation', offset: 6, options: ['Yaw · 左右转动', 'Roll · 左右侧倾', '玩家空间 · 重力防串轴'], default: 0 },
   { id: 'profileSource', label: '配置档绑定', group: 'profile', offset: 35, options: ['不限制档位', 'Edge 原生 Fn 配置档', '接收器映射档（通用）'], default: 0 },
   { id: 'sx', label: '水平灵敏度 · 倍', group: 'motion', offset: 10, size: 2, scale: 100, min: .01, max: 100, step: .01, default: 2 },
   { id: 'sy', label: '垂直灵敏度 · 倍', group: 'motion', offset: 12, size: 2, scale: 100, min: .01, max: 100, step: .01, default: 2 },
@@ -40,7 +40,7 @@ export function encodeConfig(c) {
     else v.setUint8(f.offset, Math.round(n));
   }
   if (!Number.isInteger(c.buttons) || c.buttons < 0 || c.buttons > 0xFFFFFF ||
-      !Number.isInteger(c.flags) || c.flags < 0 || c.flags > 15 ||
+      !Number.isInteger(c.flags) || c.flags < 0 || c.flags > 63 ||
       !Number.isInteger(c.profiles) || c.profiles < 0 || c.profiles > 15)
     throw new Error('按键或配置档掩码无效');
   if (c.activation !== 0 && !c.trigger && !c.buttons) throw new Error('请选择扳机或至少一个启用键');
@@ -139,7 +139,9 @@ export function decodeDiagnostics(bytes) {
 export function importBundle(data) {
   if (data?.version === 2 && Array.isArray(data.profiles) && data.profiles.length === 4) {
     const profiles = data.profiles.map(c => decodeConfig(encodeConfig(c)));
-    return { profiles, settings: decodeGlobal(encodeGlobal(data.settings)) };
+    const out = { profiles, settings: decodeGlobal(encodeGlobal(data.settings)) };
+    if (Array.isArray(data.slotNames)) out.slotNames = data.slotNames.slice(0, 4).map(s => String(s || '').trim().slice(0, 16));
+    return out;
   }
   if (data?.version === 1 && data.config) {
     const config = { ...data.config, releaseThreshold: data.config.threshold, adsMultiplier: 1 };

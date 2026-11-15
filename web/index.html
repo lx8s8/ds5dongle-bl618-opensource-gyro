@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DS5 控制中心 · BL616 / BL618</title>
-<link rel="stylesheet" href="style.css?v=20261115-rk2">
+<link rel="stylesheet" href="style.css?v=20261115-rk3">
 </head>
 <body>
 <header class="site-header">
@@ -14,7 +14,7 @@
 </header>
 <main>
 <div id="connectionHome"><div id="connectionPanel" class="connection-panel"><div class="connect-actions"><div class="connection"><span id="connectionDot" class="dot"></span><div><span id="device">未连接</span><span class="connect-sub">请使用支持 WebHID 的桌面浏览器，先关闭 Steam 等占用软件</span></div></div><div class="connect-btns"><button id="connect" class="primary">连接接收器</button><button id="disconnect" disabled>断开连接</button></div></div><p id="identityWarning" class="notice error" hidden>当前为私下测试身份 1209:0001，部分软件无法识别为 PS5 手柄；日常使用请刷回正式 Sony 身份固件。</p><p id="message" class="notice" role="status" aria-live="polite"></p></div></div>
-<section id="receiver" class="panel" hidden><div class="page-heading"><div><span class="page-kicker">01 / RECEIVER</span><h2>接收器配置</h2><p class="page-sub">音频、灯光、低功耗唤醒与回报率参数设置，支持一键应用到内存或持久保存。</p></div><span class="tag">RAM 应用 / Flash 保存</span></div><form id="receiverSettings"><div class="settings-card"><h3>连接与设备</h3><div class="grid" id="receiver-device"></div><p class="hint">USB 身份、序列号、唤醒与隐身设置可能需要保存并重启后生效。</p></div><div class="settings-card"><h3>灯光与省电</h3><div class="grid" id="receiver-power"></div><label class="color-field">手柄灯条颜色 <input id="receiverColor" type="color" value="#ffffff"></label></div><div class="settings-card"><h3>触摸板与鼠标</h3><div class="grid" id="receiver-touch"></div><p class="hint">允许通过手柄循环的模式（至少选择一种）</p><div class="checks" id="touchModes"></div></div><div class="settings-card"><h3>音频与触觉</h3><div class="grid" id="receiver-audio"></div></div><details class="advanced-section"><summary>高级兼容与音频细节</summary><p class="hint">适合排查特定游戏、控制台或录音路由问题；日常使用保持默认值即可。</p><div class="grid" id="receiver-advanced"></div></details><div class="toolbar"><button class="primary requires-device" type="submit">应用到 RAM</button><button id="receiverSave" class="requires-device" type="button">保存到设备</button><button id="receiverRestart" class="requires-device" type="button">保存并重启</button><button id="receiverRead" class="requires-device" type="button">重新读取</button><button id="receiverDefaults" type="button">填入默认值</button></div></form><div class="filebar"><button id="receiverExport">导出接收器配置</button><label class="file-button">导入配置<input id="receiverImport" type="file" accept=".json,application/json"></label></div></section>
+<section id="receiver" class="panel" hidden><div class="page-heading"><div><span class="page-kicker">01 / RECEIVER</span><h2>接收器配置</h2><p class="page-sub">音频、灯光、低功耗唤醒与回报率参数设置，支持一键应用到内存或持久保存。</p></div><span class="tag">RAM 应用 / Flash 保存</span></div><form id="receiverSettings"><div class="settings-card"><h3>连接与设备</h3><div class="grid" id="receiver-device"></div><p class="hint">USB 身份、序列号、唤醒与隐身设置可能需要保存并重启后生效。</p></div><div class="settings-card"><h3>灯光与省电</h3><div class="grid" id="receiver-power"></div><label class="color-field">手柄灯条颜色 <input id="receiverColor" type="color" value="#ffffff"></label></div><div class="settings-card"><h3>触摸板与鼠标</h3><div class="grid" id="receiver-touch"></div><p class="hint">允许通过手柄循环的模式（至少选择一种）</p><div class="checks" id="touchModes"></div></div><div class="settings-card"><h3>音频与触觉</h3><div class="grid" id="receiver-audio"></div></div><details class="advanced-section"><summary>高级兼容与音频细节</summary><p class="hint">适合排查特定游戏、控制台或录音路由问题；日常使用保持默认值即可。</p><div class="grid" id="receiver-advanced"></div></details><div class="toolbar"><button class="primary requires-device" type="submit">应用到 RAM</button><button id="receiverSave" class="requires-device" type="button">保存到设备</button><button id="receiverRestart" class="requires-device" type="button">保存并重启</button><button id="receiverRebootOnly" class="requires-device" type="button">仅软重启</button><button id="receiverRead" class="requires-device" type="button">重新读取</button><button id="receiverDefaults" type="button">填入默认值</button></div></form><div class="filebar"><button id="receiverExport">导出接收器配置</button><label class="file-button">导入配置<input id="receiverImport" type="file" accept=".json,application/json"></label></div></section>
 <section id="remap" class="panel" hidden><div class="page-heading"><div><span class="page-kicker">03 / REMAP</span><h2>按键映射</h2><p class="page-sub">独立设置各键与触控板分区输出，自动提供键盘修饰键与双键组合选项。</p></div><span class="tag" id="remapActive">当前生效：—</span></div><div class="actions"><label>编辑接收器映射档 <select id="remapSlot"><option value="0">档 1</option><option value="1">档 2</option></select></label><button id="remapActivate" class="requires-device">切换到此档</button><button id="remapRead" class="requires-device">读取此档</button><button id="remapReset">恢复此档草稿</button></div><div id="remapFilter" class="filter-bar" role="group" aria-label="按键映射筛选"><button type="button" class="filter-chip active" data-filter="all">全部 31 项</button><button type="button" class="filter-chip" data-filter="buttons">常规按键 19 项</button><button type="button" class="filter-chip" data-filter="touch">触摸分区 12 项</button><button type="button" class="filter-chip" data-filter="modified">仅已修改 <span id="remapModifiedCount" class="pill-count">0</span></button></div><p id="remapTouchNotice" class="notice warning" hidden></p><div class="table-wrap"><table class="remap-table"><thead><tr><th>来源</th><th>输出类型</th><th>目标按键</th><th>修饰键 / 第二键</th><th>屏蔽原键</th><th>双键输出</th></tr></thead><tbody id="remapRows"></tbody></table></div><p id="remapEmptyFilter" class="hint" hidden>当前筛选条件下没有映射项。</p><p class="hint">设为“键盘”时可直接勾选 Ctrl / Shift / Alt / Win；勾选“双键输出”后将自动切换为第二个键盘按键下拉框。Edge Fn / 独立背键用于体感启用和快捷动作，不属于此 31 项普通映射表。</p><div class="toolbar"><button id="remapSave" class="primary requires-device">保存此档映射</button><button id="remapExport">导出此档</button><label class="file-button">导入此档<input id="remapImport" type="file" accept=".json,application/json"></label></div></section>
   <section id="config" class="panel">
     <div class="page-heading"><div><span class="page-kicker">02 / GYRO</span><h2>陀螺仪映射</h2><p class="page-sub">选一个常见场景预设即可快速上手；高级调校、曲率预览与档位限制默认折叠收起。</p></div><div class="heading-badges"><span id="configDirty" class="badge warn" hidden>未保存修改</span><span id="currentSlot" class="tag">当前配置：—</span></div></div>
@@ -23,6 +23,7 @@
       <div class="settings-card compact-card">
         <div class="profile-actions">
           <label class="inline-field">正在编辑 <select id="editSlot"><option value="0">配置 1</option><option value="1">配置 2</option><option value="2">配置 3</option><option value="3">配置 4</option></select></label>
+          <label class="inline-field">备注名 <input id="slotCustomName" type="text" maxlength="16" placeholder="如：Apex 步枪"></label>
           <button id="activateSlot" type="button" disabled>切换生效</button>
           <div class="inline-copy"><select id="copyTarget" aria-label="复制目标配置档"><option value="">复制到…</option><option value="0">配置 1</option><option value="1">配置 2</option><option value="2">配置 3</option><option value="3">配置 4</option></select><button id="copyProfile" type="button">复制</button></div>
           <button id="configCalibrate" type="button" class="requires-device" disabled>快速零点校准</button>
@@ -68,6 +69,8 @@
           <label id="suppressWrap"><input type="checkbox" id="suppress"> 屏蔽原始按键</label>
           <label><input type="checkbox" id="invertX"> 水平反转</label>
           <label><input type="checkbox" id="invertY"> 垂直反转</label>
+          <label><input type="checkbox" id="autoBias"> 自动静止温漂校准</label>
+          <label><input type="checkbox" id="adaptiveSmooth"> 自适应微瞄滤波</label>
         </div>
       </div>
 
@@ -80,6 +83,20 @@
         <h3>右摇杆映射参数</h3>
         <p class="hint">仅“输出方式”设为“右摇杆”时生效，用于匹配主机或原版手柄游戏内的死区与响应曲线。</p>
         <div class="grid" id="stickFields"></div>
+        <details id="stickWizardDetails" class="sub-details">
+          <summary><span>右摇杆视角校准向导 &amp; 游戏模板</span><span class="tag">反推死区与满杆转速</span></summary>
+          <p class="hint">点选常见游戏模板，或按游戏内实际设置三步反推最佳死区补偿与满杆转速。</p>
+          <div id="stickGamePresets" class="preset-bar"></div>
+          <div class="grid">
+            <label class="field">1. 游戏内右摇杆死区 · %<input id="wizGameDeadzone" type="number" min="0" max="50" step="1" value="10"></label>
+            <label class="field">2. 游戏满杆转一圈 360° 用时 · 秒<input id="wizTurn360Sec" type="number" min="0.2" max="5" step="0.05" value="1.0"></label>
+            <label class="field">3. 游戏内响应曲线类型<select id="wizCurveType"><option value="linear">线性 (1.0)</option><option value="classic">经典指数 (1.4)</option><option value="precision">高精度指数 (1.8)</option><option value="dynamic">动态/快速起步 (0.88)</option></select></label>
+          </div>
+          <div class="actions">
+            <button id="wizApplyStick" type="button" class="primary">计算并填入右摇杆参数</button>
+            <span id="wizStickPreview" class="tag">推荐：满杆 360°/s · 死区补偿 9.5% · 指数 1</span>
+          </div>
+        </details>
       </div>
 
       <details id="gyroAdvancedDetails" class="settings-card">
@@ -113,13 +130,45 @@
         <div id="shortcuts"></div>
       </details>
 
+      <details id="profileLibraryDetails" class="settings-card">
+        <summary><span>本地方案库 &amp; 原生体感兼容向导</span><span id="libraryCountTag" class="tag">方案库</span></summary>
+        <div class="subhead"><h4>本地命名方案库</h4><span class="hint">保存在当前浏览器，支持单档或整套 4 档快速套用与回退</span></div>
+        <div class="actions">
+          <label class="inline-field">新方案名 <input id="libraryName" type="text" maxlength="24" placeholder="如：Apex 步枪+狙击组合"></label>
+          <button id="librarySave" type="button">保存当前 4 档到方案库</button>
+        </div>
+        <div class="actions">
+          <label class="inline-field">已存方案 <select id="librarySelect"></select></label>
+          <button id="libraryApplySlot" type="button">套用到当前档</button>
+          <button id="libraryApplyAll" type="button">套用整套 4 档</button>
+          <button id="libraryDelete" type="button" class="danger">删除方案</button>
+          <button id="undoProfileBtn" type="button" disabled>撤销上次套用/导入</button>
+        </div>
+        <hr>
+        <div class="subhead"><h4>原生体感 / Steam / 固件映射兼容向导</h4><span id="compatStatusTag" class="tag">无冲突</span></div>
+        <div class="grid">
+          <label class="field">游戏内原生体感设置<select id="compatGameGyro"><option value="0">已关闭游戏原生体感</option><option value="1">已开启游戏原生体感</option></select></label>
+          <label class="field">PC 映射软件与游戏输入策略<select id="compatHostMapper"><option value="none">无额外映射软件（支持鼠键混用）</option><option value="consoleOnlyGame">锁死纯手柄输入的游戏（禁用鼠标混用）</option><option value="steam">已开 Steam 输入陀螺仪</option><option value="ds4windows">已开 DS4Windows / JSM 陀螺仪</option></select></label>
+        </div>
+        <div id="compatResult" class="summary-banner" role="status"></div>
+      </details>
+
+      <div id="importDiffCard" class="settings-card compact-card" hidden>
+        <div class="subhead"><h3>导入配置变更预览</h3><span id="importDiffSummaryTag" class="tag">待确认</span></div>
+        <div id="importDiffList" class="diff-list"></div>
+        <div class="actions">
+          <button id="importConfirm" type="button" class="primary">确认应用导入</button>
+          <button id="importCancel" type="button">取消</button>
+        </div>
+      </div>
+
       <div class="toolbar"><button id="apply" class="primary" type="submit" disabled>应用到内存</button><button id="save" type="button" disabled>保存到设备</button><button id="read" type="button" disabled>重新读取配置</button><button id="defaults" type="button" disabled>恢复默认</button></div>
     </form>
-    <div class="filebar"><button id="export">导出体感配置</button><label class="file-button">导入配置<input type="file" id="import" accept="application/json,.json"></label><span>导入后点击应用或保存。</span></div>
+    <div class="filebar"><button id="export">导出体感配置</button><label class="file-button">导入配置<input type="file" id="import" accept="application/json,.json"></label><span>导入时将先展示变更对比预览，确认后可应用或保存。</span></div>
   </section>
 
   <section id="tester" class="panel" hidden>
-    <div class="tester-hero"><span class="page-kicker">CONTROLLER TESTER</span><div class="hero-title-row"><h2>手柄测试</h2><span class="tag">WebHID 实时</span></div><p class="page-sub">DualSense / DualSense Edge 即插即测：按键点亮、摇杆圆度、扳机行程、震动、灯光与体感曲线。</p></div>
+    <div class="tester-hero"><span class="page-kicker">CONTROLLER TESTER</span><div class="hero-title-row"><h2>手柄测试</h2><span class="tag">WebHID 实时</span><span id="liveHzBadge" class="tag">轮询率 — Hz</span></div><p class="page-sub">DualSense / DualSense Edge 即插即测：按键点亮、摇杆圆度误差、扳机行程、震动、灯光与体感曲线。</p></div>
     <div class="test-layout">
       <div class="controller-card">
         <div class="subhead"><div><h3>手柄总览</h3><span class="hint">整机示意 · 按下即点亮</span></div><span id="battery" class="tag">电量 —</span></div>
@@ -136,24 +185,29 @@
 <button type="button" id="test-tab-light" role="tab" aria-controls="test-pane-light" aria-selected="false" tabindex="-1" data-test-tab="light">灯光音频</button>
 <button type="button" id="test-tab-device" role="tab" aria-controls="test-pane-device" aria-selected="false" tabindex="-1" data-test-tab="device">轮询率</button>
 <button type="button" id="test-tab-other" role="tab" aria-controls="test-pane-other" aria-selected="false" tabindex="-1" data-test-tab="other">其他</button></div>
-          <div class="test-panes"><div id="test-pane-input" class="test-pane" role="tabpanel" aria-labelledby="test-tab-input" tabindex="0">    <div class="test-section" id="stickTests"><div class="subhead"><h3>摇杆测试</h3><div class="checks"><label><input id="stickTrail" type="checkbox" checked> 轨迹</label><label><input id="circularity" type="checkbox"> 圆度轨迹</label><button id="stickClear">清除</button></div></div><div class="two-col"><div class="stick-test"><canvas id="leftStickChart" width="280" height="280" aria-label="左摇杆实时位置"></canvas><h4>左摇杆</h4><p id="leftStickValue" class="mono">X 0 · Y 0</p></div><div class="stick-test"><canvas id="rightStickChart" width="280" height="280" aria-label="右摇杆实时位置"></canvas><h4>右摇杆</h4><p id="rightStickValue" class="mono">X 0 · Y 0</p></div></div></div>
+          <div class="test-panes"><div id="test-pane-input" class="test-pane" role="tabpanel" aria-labelledby="test-tab-input" tabindex="0">    <div class="test-section" id="stickTests"><div class="subhead"><h3>摇杆测试</h3><div class="checks"><label><input id="stickTrail" type="checkbox" checked> 轨迹</label><label><input id="circularity" type="checkbox" checked> 圆度轨迹</label><button id="stickClear">清除</button></div></div><div class="two-col"><div class="stick-test"><canvas id="leftStickChart" width="280" height="280" aria-label="左摇杆实时位置"></canvas><h4>左摇杆 <span id="leftCircularityTag" class="tag">圆度 —</span></h4><p id="leftStickValue" class="mono">X 0 · Y 0</p></div><div class="stick-test"><canvas id="rightStickChart" width="280" height="280" aria-label="右摇杆实时位置"></canvas><h4>右摇杆 <span id="rightCircularityTag" class="tag">圆度 —</span></h4><p id="rightStickValue" class="mono">X 0 · Y 0</p></div></div></div>
 <details class="fps-preview"><summary>FPS 视角预览（模拟）</summary><p class="hint">使用实际 USB 右杆输入，按当前配置的游戏满杆转速、死区和曲线模拟视角。圆点回中表示停止转视角，不会把视角拉回原位；这里不测量实际游戏延迟。</p><div class="checks"><label><input id="fpsPreview" type="checkbox"> 启用视角预览</label><button id="fpsReset" type="button">视角归零</button><span id="fpsAngles" class="mono">水平 0° · 俯仰 0°</span></div><canvas id="fpsView" width="900" height="240" aria-label="基于真实右杆输入的模拟 FPS 视角"></canvas></details></div>
 <div id="test-pane-rumble" class="test-pane" role="tabpanel" aria-labelledby="test-tab-rumble" tabindex="0" hidden><div class="subhead"><h3>震动与自适应扳机</h3><button id="outputStop" class="danger requires-device">停止</button></div><p class="hint">震动持续 1 秒，切换标签解除震动与扳机效果。</p><h4>触觉震动</h4><div class="actions"><label>强度 <input id="rumbleIntensity" type="range" min="0" max="100" value="40"></label><button id="rumbleWeak" class="requires-device">弱马达</button><button id="rumbleStrong" class="requires-device">强马达</button><button id="rumbleBoth" class="requires-device">双马达</button></div><h4>自适应扳机</h4><div class="grid"><label class="field">L2 效果<select id="leftTriggerMode"><option value="0">关闭</option><option value="1">固定阻力</option><option value="2">脉冲阻力</option></select></label><label class="field">R2 效果<select id="rightTriggerMode"><option value="0">关闭</option><option value="1">固定阻力</option><option value="2">脉冲阻力</option></select></label><label class="field">起始位置 · 0–255<input id="triggerStart" type="number" min="0" max="255" value="80"></label><label class="field">力度 · 0–255<input id="triggerForce" type="number" min="0" max="255" value="100"></label></div><button id="triggerApply" class="requires-device">应用扳机测试</button></div>
 <div id="test-pane-sense" class="test-pane" role="tabpanel" aria-labelledby="test-tab-sense" tabindex="0" hidden>    <div class="test-section" id="sensorTests"><div class="subhead"><h3>触摸板</h3><span class="tag">1920 × 1080 · 双点触控</span></div><canvas id="touchChart" width="960" height="270" aria-label="触摸板双点坐标"></canvas><div class="checks"><span id="touch0">P1 · 未接触</span><span id="touch1">P2 · 未接触</span></div><p class="hint">加速度（含重力）：<span id="accelValue">等待输入</span></p></div>
-<div class="checks"><label><input id="tiltPreview" type="checkbox"> 重力方向预览</label></div>    <div class="metrics"><div><small>采样间隔</small><strong id="interval">—</strong></div><div><small>工厂校准</small><strong id="factory">—</strong></div><div><small>零点校准</small><strong id="calibration">—</strong></div><div><small>右摇杆</small><strong id="stick">—</strong></div></div>
+<div class="checks"><label><input id="tiltPreview" type="checkbox"> 重力方向预览</label></div>    <div class="metrics"><div><small>采样间隔</small><strong id="interval">—</strong></div><div><small>工厂校准</small><strong id="factory">—</strong></div><div><small>零点校准</small><strong id="calibration">—</strong></div><div><small>静止稳定度</small><strong id="stillness">—</strong></div><div><small>右摇杆</small><strong id="stick">—</strong></div></div>
     <div class="plot-label"><span>角速度 °/s · <i class="pitch">X</i> / <i class="yaw">Y</i> / <i class="roll">Z</i></span><span id="rates">0 / 0 / 0</span></div>
     <canvas id="chart" width="1000" height="230" aria-label="陀螺仪角速度曲线"></canvas>
     <div class="checks"><button id="calibrate" disabled>静止校准</button><button id="clearCalibration" disabled>清除校准</button><button id="csv">导出数据</button><button id="exportDiagnostics">导出诊断</button></div>
     <p class="hint">请放稳手柄，保持静止 2 秒。新版固件保存上次静止校准；核对手柄标识与工厂标定后恢复。</p>
 </div>
 <div id="test-pane-light" class="test-pane" role="tabpanel" aria-labelledby="test-tab-light" tabindex="0" hidden><h4>手柄灯光</h4><div class="grid"><label class="field">颜色<input id="testColor" type="color" value="#21a68b"></label><label class="field">亮度<select id="lightBrightness"><option value="0">高</option><option value="1">中</option><option value="2">低</option></select></label><label class="field">玩家灯<select id="playerLights"><option value="0">关闭</option><option value="4">1</option><option value="10">2</option><option value="21">3</option><option value="27">4</option><option value="31">全部</option></select></label><label class="field">麦克风灯<select id="muteLight"><option value="0">关闭</option><option value="1">常亮</option><option value="2">闪烁</option></select></label></div><button id="lightApply" class="requires-device">应用灯光测试</button><h4>音量与路由</h4><div class="grid"><label class="field">耳机音量<input id="testHeadphone" type="number" min="0" max="127" value="80"></label><label class="field">扬声器音量<input id="testSpeaker" type="number" min="0" max="127" value="60"></label><label class="field">麦克风音量<input id="testMic" type="number" min="0" max="64" value="40"></label><label class="field">音频出口<select id="audioRoute"><option value="49">耳机</option><option value="0">扬声器</option></select></label></div><label class="toggle-field">麦克风静音<input id="testMicMute" type="checkbox"></label><button id="audioApply" class="requires-device">应用音频测试</button><p id="headset" class="hint">耳机状态 —</p></div>
-<div id="test-pane-device" class="test-pane" role="tabpanel" aria-labelledby="test-tab-device" tabindex="0" hidden>    <div class="test-section" id="rateTests"><div class="subhead"><h3>输入报告频率</h3><div class="actions"><button id="rateStart">开始采样</button><button id="rateStop">停止采样</button></div></div><div class="metrics"><div><small>浏览器接收平均值</small><strong id="inputHz">— Hz</strong></div><div><small>报告数</small><strong id="inputCount">0</strong></div><div><small>间隔 min / max</small><strong id="inputIntervals">— ms</strong></div></div><p class="hint">统计浏览器收到的实际 USB HID 输入，不等于蓝牙频率或端到端延迟。页面后台节流会影响观测。</p></div>
+<div id="test-pane-device" class="test-pane" role="tabpanel" aria-labelledby="test-tab-device" tabindex="0" hidden>    <div class="test-section" id="rateTests"><div class="subhead"><h3>输入报告频率</h3><div class="actions"><button id="rateStart">重置统计</button><button id="rateStop">暂停采样</button></div></div><div class="metrics"><div><small>浏览器接收平均值</small><strong id="inputHz">— Hz</strong></div><div><small>报告数</small><strong id="inputCount">0</strong></div><div><small>间隔 min / max</small><strong id="inputIntervals">— ms</strong></div><div><small>平均间隔 / 抖动</small><strong id="inputJitter">— ms</strong></div></div><p class="hint">连接接收器后自动实时统计 USB HID 输入频率与间隔抖动（标准差），可随时重置或暂停。</p></div>
 </div>
 <div id="test-pane-other" class="test-pane" role="tabpanel" aria-labelledby="test-tab-other" tabindex="0" hidden>    <div class="live-buttons" id="liveButtons" aria-label="按键"></div>
     <div class="subhead"><h3>鼠标测试</h3><span id="mouseState" class="tag" role="status">未开始</span></div>
     <div class="actions"><button id="mouseStart" type="button">开始测试</button><button id="mouseStop" type="button" disabled>结束测试</button><button id="mouseReset" type="button">清除轨迹</button><span id="mouseCounts" class="hint">事件 0 · X 0 · Y 0</span></div>
     <canvas id="mouseChart" width="1000" height="280" tabindex="0" aria-label="鼠标移动轨迹"></canvas>
     <p class="hint">点击开始后转动手柄，按 Esc 退出。轨迹来自实际鼠标输入；测试时请勿移动其他鼠标或 VNC 指针。</p>
+    <div class="subhead"><h3>诊断录制与离线回放</h3><span id="replayStatus" class="tag">待命</span></div>
+    <div class="actions">
+      <label class="file-button">加载诊断 JSON 离线回放<input id="replayFile" type="file" accept=".json,application/json"></label>
+      <button id="replayStop" type="button" hidden>停止回放</button>
+    </div>
     <details><summary>传感器数据</summary><pre id="raw">等待输入</pre></details>
     <details><summary>运行统计</summary><pre id="diagnostics">等待输入</pre></details>
 </div></div>
@@ -200,7 +254,7 @@
   <label class="field">目标槽位<select id="dualSlotTarget"><option value="0">槽位 0：体感固件（0x10000，上限 1280 KiB）</option><option value="1">槽位 1：上游原版（0x210000，上限 1152 KiB）</option></select></label>
   <label class="field">固件包 ZIP 或 .bin<input id="dualSlotFile" type="file" accept=".zip,.bin,application/zip,application/octet-stream"></label>
   <label id="dualSlotVariantField" class="field" hidden>包内 USB 变体<select id="dualSlotVariant"></select></label>
-  <label class="field">写入记录的版本号（≤19 字符）<input id="dualSlotVersion" type="text" maxlength="19" placeholder="例如 3.18G2.4RC5 / 3.24H"></label>
+  <label class="field">写入记录的版本号（≤19 字符）<input id="dualSlotVersion" type="text" maxlength="19" placeholder="例如 3.18G2.4RC6 / 3.24H"></label>
   <pre id="dualSlotSummary" class="mono hint"></pre>
   <div class="actions"><button id="dualSlotRun" class="primary" type="button" disabled>更新该槽位</button></div>
 </div>
@@ -209,7 +263,7 @@
     <label class="field">启动管理器 .bin（experimental）<input id="dualMgrFile" type="file" accept=".bin,application/octet-stream"></label>
     <label class="field">体感固件（ZIP 或 .bin）<input id="dualGyroFile" type="file" accept=".zip,.bin,application/zip,application/octet-stream"></label>
     <label id="dualGyroVariantField" class="field" hidden>体感包 USB 变体<select id="dualGyroVariant"></select></label>
-    <label class="field">体感槽位版本号<input id="dualGyroVer" type="text" maxlength="19" placeholder="例如 3.18G2.4RC5"></label>
+    <label class="field">体感槽位版本号<input id="dualGyroVer" type="text" maxlength="19" placeholder="例如 3.18G2.4RC6"></label>
     <label class="field">上游原版固件（ZIP 或 .bin）<input id="dualUpFile" type="file" accept=".zip,.bin,application/zip,application/octet-stream"></label>
     <label id="dualUpVariantField" class="field" hidden>上游包 USB 变体<select id="dualUpVariant"></select></label>
     <label class="field">上游槽位版本号<input id="dualUpVer" type="text" maxlength="19" placeholder="例如 3.24"></label>
@@ -241,6 +295,6 @@
 </section>
 <footer></footer>
 </main>
-<script type="module" src="app.js?v=20261115-rk2"></script>
+<script type="module" src="app.js?v=20261115-rk3"></script>
 </body>
 </html>

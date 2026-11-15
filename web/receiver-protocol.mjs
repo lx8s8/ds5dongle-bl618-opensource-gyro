@@ -1,6 +1,6 @@
 export const receiverFields = [
  {id:'controller_mode',label:'手柄身份',group:'device',offset:12,options:['DualSense','DualSense Edge','自动识别'],default:2},
- {id:'polling_rate_mode',label:'USB 报告频率',group:'device',offset:10,options:['250 Hz','500 Hz','跟随蓝牙输入'],default:2},
+ {id:'polling_rate_mode',label:'USB 报告频率',group:'device',offset:10,options:['250 Hz','500 Hz','750 Hz (实时)'],default:2},
  {id:'enable_usb_sn',label:'启用独立 USB 序列号',group:'device',offset:13,bool:true,default:0},
  {id:'usb_stealth',label:'连接手柄后才显示 USB',group:'device',offset:21,bool:true,default:0},
  {id:'enable_wake',label:'允许手柄唤醒电脑',group:'device',offset:17,bool:true,default:1},

@@ -9,16 +9,17 @@ static struct {
     bool connected, active, held, qualified, latched, timestamp_valid, toggle_armed;
     bool factory, calibrating, calibrated, trigger_held, ads_held, paused;
     bool cal_clock, cal_failed, stick_moving;
+    bool still, auto_calibrated, gravity_valid;
     uint32_t cal_started;
     uint16_t fine_multiplier;
     uint32_t last_sensor, last_host, held_since, dt_us, packets, buttons;
-    float scale[3], factory_bias[3], bias[3], rate[3], filtered[2], pending[2];
+    float scale[3], factory_bias[3], bias[3], rate[3], filtered[2], pending[2], gravity[3];
     int16_t raw[3], accel[3];
     uint8_t stick[2];
     uint8_t dongle_profile, native_profile, selected_profile;
-    uint32_t cal_us;
-    uint16_t cal_samples;
-    float cal_sum[3], cal_min[3], cal_max[3];
+    uint32_t cal_us, still_us, auto_cal_us;
+    uint16_t cal_samples, still_samples;
+    float cal_sum[3], cal_min[3], cal_max[3], still_min[3], still_max[3];
 } motion;
 
 static uint16_t u16(const uint8_t *p) { return p[0] | ((uint16_t)p[1] << 8); }
@@ -78,12 +79,16 @@ void gyro_reset_stream(bool forget_calibration)
     motion.connected = motion.timestamp_valid = false;
     motion.selected_profile = 255;
     motion.dt_us = 0;
+    motion.still = motion.gravity_valid = false;
+    motion.still_us = 0; motion.still_samples = 0;
+    memset(motion.gravity, 0, sizeof(motion.gravity));
     memset(motion.filtered, 0, sizeof(motion.filtered));
     memset(motion.pending, 0, sizeof(motion.pending));
     motion.cal_us = 0; motion.cal_samples = 0;
     if (forget_calibration) {
         motion.factory = motion.calibrating = motion.calibrated = false;
-        motion.cal_clock = motion.cal_failed = false;
+        motion.cal_clock = motion.cal_failed = motion.auto_calibrated = false;
+        motion.auto_cal_us = 0;
         memset(motion.bias, 0, sizeof(motion.bias));
         memset(motion.factory_bias, 0, sizeof(motion.factory_bias));
         for (int i = 0; i < 3; i++) motion.scale[i] = 1.0f / 16.0f;
@@ -109,8 +114,8 @@ static bool decode(const uint8_t *p, uint16_t len, struct gyro_config *result)
         .ads_multiplier = p[0] == 1 ? 100 : u16(p + 38),
     };
     if (c.output > GYRO_RIGHT_STICK || c.activation > GYRO_HOLD_OFF ||
-        c.trigger > 2 || !c.threshold || (c.flags & ~15u) ||
-        c.horizontal_axis > 1 || c.smoothing_ms > 100 || c.hold_ms > 3000 ||
+        c.trigger > 2 || !c.threshold || (c.flags & ~63u) ||
+        c.horizontal_axis > GYRO_AXIS_PLAYER_SPACE || c.smoothing_ms > 100 || c.hold_ms > 3000 ||
         !c.sensitivity_x || c.sensitivity_x > 10000 ||
         !c.sensitivity_y || c.sensitivity_y > 10000 ||
         !c.mouse_cpd || c.mouse_cpd > 10000 || c.noise_dps > 1000 ||
@@ -193,7 +198,9 @@ void gyro_clear_calibration(void)
 {
     motion.calibrating = motion.calibrated = false;
     motion.cal_clock = motion.cal_failed = false;
-    motion.cal_us = 0; motion.cal_samples = 0;
+    motion.still = motion.auto_calibrated = false;
+    motion.cal_us = motion.still_us = motion.auto_cal_us = 0;
+    motion.cal_samples = motion.still_samples = 0;
     memset(motion.bias, 0, sizeof(motion.bias));
     memset(motion.filtered, 0, sizeof(motion.filtered));
     memset(motion.pending, 0, sizeof(motion.pending));
@@ -301,6 +308,84 @@ static void calibration_timeout(uint32_t now_us)
     }
 }
 
+static void update_stillness(const float uncorrected[3], uint32_t dt)
+{
+    float g2 = 0;
+    bool quiet = true;
+    for (int i = 0; i < 3; i++) {
+        float a = motion.accel[i] / 8192.0f;
+        g2 += a * a;
+        if (fabsf(uncorrected[i] - motion.bias[i]) > 1.5f ||
+            fabsf(uncorrected[i]) > 15.0f)
+            quiet = false;
+    }
+    if (!quiet || g2 < 0.81f || g2 > 1.21f) {
+        motion.still = false;
+        motion.still_us = 0;
+        motion.still_samples = 0;
+        return;
+    }
+    if (!motion.still_samples) {
+        for (int i = 0; i < 3; i++)
+            motion.still_min[i] = motion.still_max[i] = uncorrected[i];
+    }
+    for (int i = 0; i < 3; i++) {
+        motion.still_min[i] = fminf(motion.still_min[i], uncorrected[i]);
+        motion.still_max[i] = fmaxf(motion.still_max[i], uncorrected[i]);
+        if (motion.still_max[i] - motion.still_min[i] > 0.6f) {
+            motion.still = false;
+            motion.still_us = 0;
+            motion.still_samples = 0;
+            return;
+        }
+    }
+    motion.still_us += dt;
+    if (motion.still_samples < UINT16_MAX) motion.still_samples++;
+    if (motion.still_us >= 1000000u && motion.still_samples >= 40) {
+        motion.still = true;
+        if ((cfg.flags & GYRO_AUTO_BIAS) && !motion.calibrating) {
+            float alpha = (float)dt / ((float)dt + 2000000.0f);
+            for (int i = 0; i < 3; i++) {
+                motion.bias[i] = clamp(motion.bias[i] + alpha * (uncorrected[i] - motion.bias[i]), -15.0f, 15.0f);
+                motion.rate[i] = uncorrected[i] - motion.bias[i];
+            }
+            motion.auto_cal_us += dt;
+            if (motion.auto_cal_us >= 1000000u) motion.auto_calibrated = true;
+        }
+    }
+}
+
+static void update_gravity(uint32_t dt)
+{
+    float ax = motion.accel[0] / 8192.0f;
+    float ay = motion.accel[1] / 8192.0f;
+    float az = motion.accel[2] / 8192.0f;
+    float g2 = ax * ax + ay * ay + az * az;
+    if (g2 < 0.25f || g2 > 2.25f) return;
+    if (!motion.gravity_valid || !dt) {
+        motion.gravity[0] = ax;
+        motion.gravity[1] = ay;
+        motion.gravity[2] = az;
+        motion.gravity_valid = true;
+        return;
+    }
+    float alpha = (float)dt / ((float)dt + 150000.0f);
+    motion.gravity[0] += alpha * (ax - motion.gravity[0]);
+    motion.gravity[1] += alpha * (ay - motion.gravity[1]);
+    motion.gravity[2] += alpha * (az - motion.gravity[2]);
+}
+
+static float horizontal_rate(void)
+{
+    if (cfg.horizontal_axis == GYRO_AXIS_ROLL) return motion.rate[2];
+    if (cfg.horizontal_axis == GYRO_AXIS_PLAYER_SPACE && motion.gravity_valid) {
+        float gy = motion.gravity[1], gz = motion.gravity[2];
+        float norm = hypotf(gy, gz);
+        if (norm > 0.1f) return (motion.rate[1] * gy + motion.rate[2] * gz) / norm;
+    }
+    return motion.rate[1];
+}
+
 void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool edge)
 {
     calibration_timeout(host_us);
@@ -326,8 +411,10 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
         uncorrected[i] = (motion.raw[i] - motion.factory_bias[i]) * motion.scale[i];
         motion.rate[i] = uncorrected[i] - motion.bias[i];
     }
+    update_gravity(motion.dt_us);
     bool calibrating = motion.calibrating;
     if (calibrating && motion.dt_us) calibrate(uncorrected, motion.dt_us);
+    else if (motion.dt_us) update_stillness(uncorrected, motion.dt_us);
 
     /* Native profile codes are 1=Fn+Triangle(default), 2=Fn+Square,
      * 3=Fn+Cross, 4=Fn+Circle. Unknown values fail closed when bound.
@@ -361,7 +448,7 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
     if (allowed && cfg.output && (cfg.flags & GYRO_SUPPRESS))
         gyro_suppress_buttons(out, cfg.buttons | (cfg.trigger ? 1u << (5 + cfg.trigger) : 0));
 
-    float hand[2] = { motion.rate[cfg.horizontal_axis ? 2 : 1], -motion.rate[0] };
+    float hand[2] = { horizontal_rate(), -motion.rate[0] };
     if (cfg.flags & GYRO_INVERT_X) hand[0] = -hand[0];
     if (cfg.flags & GYRO_INVERT_Y) hand[1] = -hand[1];
     float speed = sqrtf(hand[0] * hand[0] + hand[1] * hand[1]);
@@ -378,7 +465,14 @@ void gyro_process(const uint8_t raw[63], uint8_t out[63], uint32_t host_us, bool
      * game's deadzone. Returning to quiet also discards the filter's tail. */
     motion.stick_moving = stick_output && speed > noise * (was_moving ? 1.0f : 1.5f);
     float smooth_us = cfg.smoothing_ms * 1000.0f;
-    if (stick_output) smooth_us /= 1 + 3 * clamp(speed / 90.0f, 0, 1);
+    if ((cfg.flags & GYRO_ADAPTIVE_SMOOTH) && smooth_us > 0) {
+        float low = fmaxf(noise * 2.0f, 1.5f);
+        float high = fmaxf(low + 10.0f, 45.0f);
+        float t = clamp((speed - low) / (high - low), 0.0f, 1.0f);
+        smooth_us = smooth_us * 1.8f * (1.0f - t);
+    } else if (stick_output) {
+        smooth_us /= 1 + 3 * clamp(speed / 90.0f, 0, 1);
+    }
     float alpha = smooth_us ? motion.dt_us / (motion.dt_us + smooth_us) : 1;
     for (int i = 0; i < 2; i++) {
         float target = hand[i] * tighten * acceleration *
@@ -440,7 +534,8 @@ void gyro_get_status(uint8_t p[GYRO_REPORT_SIZE])
     memset(p, 0, GYRO_REPORT_SIZE);
     p[0] = GYRO_CONFIG_VERSION;
     p[1] = motion.connected | (motion.active << 1) | (motion.calibrating << 2) |
-           (motion.calibrated << 3) | (motion.factory << 4) | (motion.cal_failed << 5);
+           (motion.calibrated << 3) | (motion.factory << 4) | (motion.cal_failed << 5) |
+           (motion.still << 6) | (motion.auto_calibrated << 7);
     p[2] = cfg.output;
     p[3] = (uint8_t)fminf(100, motion.cal_us / 20000.0f);
     put32(p + 4, motion.dt_us);

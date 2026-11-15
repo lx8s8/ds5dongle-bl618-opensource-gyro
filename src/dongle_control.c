@@ -59,6 +59,9 @@ uint8_t dongle_control_command(uint8_t rid, const uint8_t *p, uint16_t len)
         } else if (p[0] == 4 && len == 63) {
             last_result = boot_manager_request() ? 0 : 1;
             if (!last_result) effects = DONGLE_RESET;
+        } else if (p[0] == 5) {
+            last_result = 0;
+            effects = DONGLE_RESET;
         }
     } else if (rid == 0xFB) {
         uint8_t profile = len >= 2 ? p[1] : remap_get_active_profile();

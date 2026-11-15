@@ -125,6 +125,7 @@ export function initReceiverUI({transport,action,message,download}){
  $('receiverDefaults').onclick=()=>{config=receiverDefaults();render();message('默认值已填入，请应用或保存');};
  async function save(reboot){config=form();config=decodeReceiver(await transport().legacy(0xF6,1,encodeReceiver(config)));render();await transport().legacy(0xF6,2);if(reboot){message('已保存，接收器即将重新枚举，请重新连接');transport().legacy(0xF6,3).catch(()=>{});}else message('接收器设置已保存');}
  $('receiverSave').onclick=()=>action(()=>save(false));$('receiverRestart').onclick=()=>action(()=>save(true));
+ if($('receiverRebootOnly'))$('receiverRebootOnly').onclick=()=>action(async()=>{message('接收器正在软重启，请稍候重新连接');transport().legacy(0xF6,5).catch(()=>{});});
  $('receiverExport').onclick=()=>{try{download('ds5-receiver-config.json',JSON.stringify({version:1,receiver:form()},null,2),'application/json');}catch(e){message(e.message,true);}};
  $('receiverImport').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;if(file.size>65536)throw new Error('配置文件过大');const x=JSON.parse(await file.text());if(x.version!==1)throw new Error('配置文件版本不支持');config=decodeReceiver(encodeReceiver(x.receiver));render();e.target.value='';message('已导入接收器草稿，请应用或保存');});
  $('remapSlot').onchange=()=>action(async()=>{edit=Number($('remapSlot').value);if(transport())await readRemap();else{table=remapDefaults();renderTable();}});

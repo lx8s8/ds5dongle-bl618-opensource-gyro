@@ -440,6 +440,65 @@ static void test_persisted_calibration(void)
  assert(gyro_restore_calibration(bias));float bad[3]={0,NAN,0};assert(!gyro_restore_calibration(bad));assert(gyro_get_calibration(actual)&&actual[1]==1.25f);bad[1]=21;assert(!gyro_restore_calibration(bad));
  calibration_cache=false;
 }
+static void test_auto_bias_player_space_and_adaptive(void)
+{
+    /* 1. Auto stillness detection & slow bias tracking (GYRO_AUTO_BIAS) */
+    setup(); c[5] = GYRO_AUTO_BIAS; assert(gyro_set_config(c, 40));
+    put16(p + 17, 16); /* 1.0 deg/s resting offset */
+    tick(1000, false);
+    for (int i = 0; i < 105; i++) tick(10000, false);
+    gyro_get_status(status);
+    assert(status[1] & GYRO_STATUS_STILL);
+    for (int i = 0; i < 600; i++) tick(10000, false);
+    gyro_get_status(status);
+    assert((status[1] & GYRO_STATUS_STILL) && (status[1] & GYRO_STATUS_AUTO_BIAS));
+    int16_t learned_bias_y = (int16_t)(status[54] | (status[55] << 8));
+    assert(learned_bias_y >= 85 && learned_bias_y <= 105); /* ~1.00 deg/s */
+    put16(p + 17, 1600); tick(10000, false);
+    gyro_get_status(status);
+    assert(!(status[1] & GYRO_STATUS_STILL)); /* movement immediately clears stillness */
+
+    /* 2. Gravity-fused Player Space coordinate system (GYRO_AXIS_PLAYER_SPACE) */
+    setup(); c[6] = GYRO_AXIS_PLAYER_SPACE; assert(gyro_set_config(c, 40));
+    /* Flat: accel=(0, 8192, 0) -> Yaw drives horizontal, Roll does not */
+    put16(p + 21, 0); put16(p + 23, 8192); put16(p + 25, 0);
+    put16(p + 17, 1600); put16(p + 19, 0);
+    tick(1000, false); tick(10000, false);
+    gyro_get_status(status); assert((int32_t)get32(status + 32) == 10000);
+    /* Vertical 90 deg pitch: accel=(0, 0, 8192) -> Roll drives horizontal */
+    gyro_reset_stream(false);
+    put16(p + 21, 0); put16(p + 23, 0); put16(p + 25, 8192);
+    put16(p + 17, 0); put16(p + 19, 1600);
+    tick(1000, false); tick(10000, false);
+    gyro_get_status(status); assert((int32_t)get32(status + 32) == 10000);
+    /* 45 deg pitch: accel=(0, 5793, 5793) -> Yaw + Roll combine without sensitivity loss */
+    gyro_reset_stream(false);
+    put16(p + 21, 0); put16(p + 23, 5793); put16(p + 25, 5793);
+    put16(p + 17, 1131); put16(p + 19, 1131);
+    tick(1000, false); tick(10000, false);
+    gyro_get_status(status);
+    int32_t combined = (int32_t)get32(status + 32);
+    assert(combined >= 9900 && combined <= 10100);
+
+    /* 3. Adaptive micro-aim smoothing filter (GYRO_ADAPTIVE_SMOOTH) */
+    setup(); c[5] = GYRO_ADAPTIVE_SMOOTH; c[7] = 20; assert(gyro_set_config(c, 40));
+    put16(p + 17, 0); tick(1000, false);
+    put16(p + 17, 32); /* 2.0 deg/s micro-aim step */
+    tick(10000, false);
+    gyro_get_status(status);
+    int32_t micro_out = (int32_t)get32(status + 32);
+    assert(micro_out > 0 && micro_out < 60); /* strongly smoothed (<30% of 200) */
+    put16(p + 17, 1280); /* 80.0 deg/s fast flick step */
+    tick(10000, false);
+    gyro_get_status(status);
+    int32_t flick_out = (int32_t)get32(status + 32);
+    assert(flick_out == 8000); /* zero filter lag at flick speed */
+
+    /* 4. Pure software reboot command 0xF6 / 5 */
+    uint8_t reboot_cmd[63] = {5};
+    reboot_cmd[62] = 42;
+    assert(dongle_control_command(0xF6, reboot_cmd, 63) == DONGLE_RESET);
+}
 int main(void)
 {
     setbuf(stdout, NULL);
@@ -462,5 +521,6 @@ int main(void)
     puts("control/metrics"); test_deferred_control_and_metrics();
     puts("calibration timeout/retry"); test_calibration_timeout_and_retry();
     puts("persistent calibration"); test_persisted_calibration();
-    puts("gyro: 19 test groups passed"); return 0;
+    puts("auto bias/player space/adaptive"); test_auto_bias_player_space_and_adaptive();
+    puts("gyro: 20 test groups passed"); return 0;
 }

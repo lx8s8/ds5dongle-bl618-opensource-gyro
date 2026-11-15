@@ -1431,7 +1431,9 @@ fieldset {
 
 .test-panes {
   padding: 20px 22px;
-  min-height: 460px;
+  height: 640px;
+  min-height: 640px;
+  overflow-y: auto;
 }
 
 .test-section h3 {
@@ -1883,6 +1885,44 @@ progress::-webkit-progress-value {
 
   .test-panes {
     padding: 16px;
+    height: auto;
     min-height: auto;
+    overflow-y: visible;
   }
 }
+
+/* ================= Import Diff Preview & Library ================= */
+.diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.diff-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--field);
+  border: 1px solid var(--field-line);
+}
+
+.diff-item strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.diff-item ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.diff-item li + li {
+  margin-top: 2px;
+}
+
