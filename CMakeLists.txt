@@ -30,6 +30,11 @@ target_sources(app PRIVATE
     src/gyro.c
     src/gyro_runtime.c
     src/diagnostics.c
+    src/macro_engine.c
+    src/macro_storage.c
+    src/macro_runtime.c
+    src/hid_mix.c
+    src/link_diag.c
     src/dongle_control.c
     src/boot_manager_client.c
     boot/manager/boot_store.c

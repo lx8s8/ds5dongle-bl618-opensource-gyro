@@ -9,7 +9,7 @@
 <body>
 <header class="site-header">
   <a class="brand" href="#tester"><h1>DS5 控制中心</h1></a>
-  <nav class="site-nav" aria-label="页面"><a href="#tester">手柄测试</a><a href="#receiver">接收器配置</a><a href="#config">陀螺仪映射</a><a href="#remap">按键映射</a><a href="#update">固件与更新</a></nav>
+  <nav class="site-nav" aria-label="页面"><a href="#tester">手柄测试</a><a href="#receiver">接收器配置</a><a href="#config">陀螺仪映射</a><a href="#remap">按键映射</a><a href="#macros">宏与绑定</a><a href="#update">固件与更新</a></nav>
   <button id="themeToggle" type="button" aria-label="切换深色外观">深色</button>
 </header>
 <main>
@@ -72,7 +72,7 @@
     <div class="plot-label"><span>角速度 °/s · <i class="pitch">X</i> / <i class="yaw">Y</i> / <i class="roll">Z</i></span><span id="rates">0 / 0 / 0</span></div>
     <canvas id="chart" width="1000" height="230" aria-label="陀螺仪角速度曲线"></canvas>
     <div class="checks"><button id="calibrate" disabled>静止校准</button><button id="clearCalibration" disabled>清除校准</button><button id="csv">导出数据</button><button id="exportDiagnostics">导出诊断</button></div>
-    <p class="hint">请放稳手柄，保持静止 2 秒。重连后需重新校准。</p>
+    <p class="hint">请放稳手柄，保持静止 2 秒。新版固件保存上次静止校准；核对手柄标识与工厂标定后恢复。</p>
 </div>
 <div id="test-pane-light" class="test-pane" role="tabpanel" aria-labelledby="test-tab-light" tabindex="0" hidden><h4>手柄灯光</h4><div class="grid"><label class="field">颜色<input id="testColor" type="color" value="#21a68b"></label><label class="field">亮度<select id="lightBrightness"><option value="0">高</option><option value="1">中</option><option value="2">低</option></select></label><label class="field">玩家灯<select id="playerLights"><option value="0">关闭</option><option value="4">1</option><option value="10">2</option><option value="21">3</option><option value="27">4</option><option value="31">全部</option></select></label><label class="field">麦克风灯<select id="muteLight"><option value="0">关闭</option><option value="1">常亮</option><option value="2">闪烁</option></select></label></div><button id="lightApply" class="requires-device">应用灯光测试</button><h4>音量与路由</h4><div class="grid"><label class="field">耳机音量<input id="testHeadphone" type="number" min="0" max="127" value="80"></label><label class="field">扬声器音量<input id="testSpeaker" type="number" min="0" max="127" value="60"></label><label class="field">麦克风音量<input id="testMic" type="number" min="0" max="64" value="40"></label><label class="field">音频出口<select id="audioRoute"><option value="49">耳机</option><option value="0">扬声器</option></select></label></div><label class="toggle-field">麦克风静音<input id="testMicMute" type="checkbox"></label><button id="audioApply" class="requires-device">应用音频测试</button><p id="headset" class="hint">耳机状态 —</p></div>
 <div id="test-pane-device" class="test-pane" role="tabpanel" aria-labelledby="test-tab-device" tabindex="0" hidden>    <div class="test-section" id="rateTests"><div class="subhead"><h3>输入报告频率</h3><div class="actions"><button id="rateStart">开始采样</button><button id="rateStop">停止采样</button></div></div><div class="metrics"><div><small>浏览器接收平均值</small><strong id="inputHz">— Hz</strong></div><div><small>报告数</small><strong id="inputCount">0</strong></div><div><small>间隔 min / max</small><strong id="inputIntervals">— ms</strong></div></div><p class="hint">统计浏览器收到的实际 USB HID 输入，不等于蓝牙频率或端到端延迟。页面后台节流会影响观测。</p></div>
@@ -89,6 +89,17 @@
       </div>
     </div>
   </section>
+
+<section id="macros" class="panel" hidden>
+<div class="page-heading"><h2>宏与绑定</h2><span id="macroSupport" class="tag">未连接</span></div>
+<div class="settings-card"><div class="actions"><label>设备槽位 <select id="macroSlot"></select></label><button id="macroRead" class="requires-macro">读取</button><button id="macroDelete" class="requires-macro">删除此槽</button><span id="macroSpace" class="hint"></span></div>
+<div class="grid"><label class="field">名称<input id="macroName" maxlength="23"></label><label class="field">播放方式<select id="macroMode"><option value="0">单次 / 指定次数</option><option value="1">按住循环，松开停止</option><option value="2">按下开启，再按关闭</option></select></label><label class="field">单次触发的重复次数<input id="macroRepeat" type="number" min="1" max="255" value="1"></label><label class="field">循环间隔 · ms<input id="macroPause" type="number" min="0" max="65535" value="100"></label></div>
+<div class="subhead"><h3>步骤</h3><span id="macroStepCount" class="tag"></span></div><div class="actions"><button id="macroAddDown">添加按下</button><button id="macroAddUp">添加松开</button><button id="macroAddWait">添加等待</button><button id="macroClear">清空草稿</button><button id="macroRecord" class="requires-macro">录制手柄按键</button><button id="macroRecordStop" disabled>结束录制</button></div>
+<div class="table-wrap"><table class="remap-table"><thead><tr><th>序号</th><th>输出</th><th>按键</th><th>动作</th><th>之后等待 · ms</th><th></th></tr></thead><tbody id="macroSteps"></tbody></table></div><p id="macroEmpty" class="hint">添加步骤或开始录制。</p>
+<p class="hint">支持手柄键、键盘键和鼠标键。录制捕获手柄当前 USB 输出，录制期间暂停设备宏；键盘和鼠标步骤可手动编辑。结束、断连、切换配置或输入中断会释放宏按键。</p>
+<div class="toolbar"><button id="macroSave" class="primary requires-macro">保存此宏</button><button id="macroTest" class="requires-macro">测试已保存的单次宏</button><button id="macroStop" class="requires-macro">停止并释放按键</button><button id="macroExport">导出 JSON</button><button id="macroBinary">导出 MAC1 文件</button><label class="file-button">导入<input id="macroImport" type="file" accept=".json,.mac,.bin"></label></div></div>
+<div class="settings-card"><div class="subhead"><h3>触发绑定</h3><div class="actions"><button id="macroRulesRead" class="requires-macro">读取绑定</button><button id="macroRulesSave" class="primary requires-macro">保存绑定</button></div></div><p class="hint">所选按键全部按住才成立。支持 Fn、背键和组合键；同一时刻播放一个宏。宏随接收器运行，不需要控制中心常驻。</p><div id="macroBindings"></div></div>
+</section>
 
   <section id="update" class="panel" hidden><div class="page-heading"><div><h2>固件与更新</h2></div><span class="tag">当前：<b id="firmware">未连接</b></span></div><div class="settings-card"><div class="grid"><label class="field">固件来源<select id="releaseSource"><option value="gyro">本项目 · 体感映射固件</option><option value="upstream">上游 · 原版固件</option></select></label><label class="field">开发板<select id="releaseBoard"><option value="lctech616">LCTech BL616 / 当前信海板</option><option value="aim61">Ai-M61 BL618</option><option value="m0sdock">Sipeed M0S Dock</option></select></label><label class="field">USB 速度<select id="releaseUSB"><option value="fs">FS · 兼容模式</option><option value="hs">HS · 高速模式</option></select></label></div><div class="actions"><button id="releaseRefresh" class="primary">检查更新</button><label><input id="includePrerelease" type="checkbox" checked> 包含测试版 / 预发布</label><span id="releaseStatus" class="hint">进入此页时自动检查</span></div><p id="upstreamNotice" class="notice warning" hidden>上游原版固件不包含本项目新增的体感功能。v3.24 发布包与其公开源码版本不同；包内 USB 速度以发布说明为准，不能仅凭文件名判断。</p></div><div class="settings-card" id="bootManager"><h3>双固件切换 · 实验性</h3>
 <p class="notice warning">启动管理器原型尚待真机验收，当前普通固件不包含双固件安装。此处连接独立管理接口，日常手柄保持 Sony 身份。切换会重启接收器，先保存要保留的设置。</p>

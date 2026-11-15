@@ -17,6 +17,8 @@
 #include "dse.h"
 #include "remap.h"
 #include "gyro_runtime.h"
+#include "macro_runtime.h"
+#include "link_diag.h"
 
 #include "bl616_glb.h"
 #include "btble_lib_api.h"
@@ -1091,6 +1093,7 @@ static void usb_task(void *arg)
         }
         usb_gamepad_process_deferred();
         gyro_runtime_poll(ds5_connected, (uint32_t)bflb_mtimer_get_time_us());
+        macro_runtime_poll(ds5_connected, (uint32_t)(bflb_mtimer_get_time_us()/1000));
         uint8_t gyro_notice = gyro_runtime_take_feedback();
         if (gyro_notice && ds5_connected) led_status_notify(gyro_notice);
 
@@ -1107,6 +1110,7 @@ static void usb_task(void *arg)
         if (ds5_connected && usb_fwd_count > 0 &&
             (bflb_mtimer_get_time_us() - last_input_us) > CONN_WATCHDOG_US) {
             LOG_WRN("[MAIN] Watchdog: no input for 3s, force disconnect\n");
+            link_diag_note(LINK_INPUT_WATCHDOG,usb_fwd_count,0);
             bt_hid_host_force_disconnect();
             last_input_us = bflb_mtimer_get_time_us();
             usb_fwd_count = 0;
@@ -1233,6 +1237,8 @@ static void usb_task(void *arg)
                 remap_kbd_tick(raw_report + 2);
             remap_mouse_tick(raw_report + 2);
             remap_apply(raw_report + 2);
+            macro_runtime_process(gyro_source,raw_report+2,bt_hid_host_is_dse(),
+                                  gyro_runtime_active_slot(),(uint32_t)(bflb_mtimer_get_time_us()/1000));
             usb_gamepad_send_raw_input(raw_report + 2);
             usb_wake_on_bt_input(raw_report + 2, DS5_USB_INPUT_PAYLOAD_LEN);
 
@@ -1436,6 +1442,7 @@ int main(void)
     remap_init();
     remap_load();
     gyro_runtime_init();
+    macro_runtime_init();
     led_status_init();
     led_status_set(LED_PURPLE_BLINK_SLOW);
     boot_button_init();

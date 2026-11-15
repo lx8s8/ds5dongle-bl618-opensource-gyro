@@ -36,7 +36,7 @@ struct gyro_config {
 
 /* Pure C engine; one owner (usb_task). Units on wire: sensitivity, mouse_cpd,
  * noise_dps, stick_power and accel_multiplier use /100; stick_deadzone /1000.
- * No controller-specific calibration or transient bias is stored in flash. */
+ * The runtime may persist an explicitly measured bias for the same controller. */
 void gyro_init(void);
 void gyro_defaults(uint8_t out[GYRO_CONFIG_SIZE]);
 bool gyro_set_config(const uint8_t *data, uint16_t len);
@@ -46,6 +46,8 @@ void gyro_reset_stream(bool forget_calibration);
 bool gyro_set_factory_calibration(const uint8_t *data, uint16_t len);
 void gyro_start_calibration(void);
 void gyro_clear_calibration(void);
+bool gyro_get_calibration(float bias[3]);
+bool gyro_restore_calibration(const float bias[3]);
 void gyro_process(const uint8_t raw[63], uint8_t output[63],
                   uint32_t host_us, bool edge);
 void gyro_idle(uint32_t host_us);

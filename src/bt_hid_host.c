@@ -1,6 +1,7 @@
 #include "bt_hid_host.h"
 #include "ds5_protocol.h"
 #include "dse.h"
+#include "link_diag.h"
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
@@ -455,6 +456,7 @@ static int l2cap_ctrl_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
                        rid, len - 2);
 
                 feature_cache_store(rid, data + 2, len - 2);
+                dse_on_feature_received(rid, len - 2);
 
                 if (rid == 0x70 && hid_ctx.check_dse) {
                     hid_ctx.check_dse = false;
@@ -563,23 +565,7 @@ static void l2cap_intr_connected(struct bt_l2cap_chan *chan)
     bt_br_set_connectable(false);
     bt_br_set_discoverable(false);
 
-    /* Shorten the Link Supervision Timeout so the BL618 controller
-     * detects a dead link within ~5 s instead of the default ~20 s.
-     * HCI Write_Link_Supervision_Timeout: OGF 0x03, OCF 0x0037.
-     * Timeout unit = 0.625 ms; 5 s = 8000 slots = 0x1F40. */
-    if (hid_ctx.conn) {
-        uint16_t handle = hid_ctx.conn->handle;
-        struct net_buf *buf = bt_hci_cmd_create(
-            BT_OP(BT_OGF_BASEBAND, 0x0037), 4);
-        if (buf) {
-            net_buf_add_le16(buf, handle);
-            net_buf_add_le16(buf, 0x1F40);
-            int err = bt_hci_cmd_send_sync(
-                BT_OP(BT_OGF_BASEBAND, 0x0037), buf, NULL);
-            LOG_INF("[BT] Write Link Supervision Timeout: handle=0x%04x "
-                   "timeout=5s err=%d\n", handle, err);
-        }
-    }
+    /* Retain negotiated link supervision timeout; input watchdog handles dead links. */
 
     set_state(BT_HID_STATE_HANDSHAKE);
 
@@ -813,6 +799,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 
 static void conn_connected(struct bt_conn *conn, uint8_t err)
 {
+    link_diag_note(LINK_ACL_UP,err,hid_ctx.state);
     LOG_DBG("[BT-CB] conn_connected ENTER conn=%p err=%d state=%d\n",
            conn, err, hid_ctx.state);
 
@@ -894,13 +881,32 @@ static void conn_connected(struct bt_conn *conn, uint8_t err)
 static volatile int8_t cached_rssi = 1; /* 1 = unknown (positive → web shows "Unknown") */
 static volatile bool switch_pending = false;
 
+/* Connection ownership adapted from NiceTimeJob/DS5DongleRE, 6f5035d.
+ * A disconnect command may synchronously dispatch the completion callback.
+ * Detach ownership before the command, and release exactly the claimed ref. */
+static struct bt_conn *conn_take(struct bt_conn *expected)
+{
+    struct bt_conn *c=NULL;
+    taskENTER_CRITICAL();
+    if(hid_ctx.conn&&(!expected||hid_ctx.conn==expected)){c=hid_ctx.conn;hid_ctx.conn=NULL;}
+    taskEXIT_CRITICAL();
+    return c;
+}
+static struct bt_conn *conn_acquire(void)
+{
+    struct bt_conn *c;
+    taskENTER_CRITICAL();c=hid_ctx.conn;if(c)bt_conn_ref(c);taskEXIT_CRITICAL();return c;
+}
+
 static void conn_disconnected(struct bt_conn *conn, uint8_t reason)
 {
+    link_diag_note(LINK_ACL_DOWN,reason,hid_ctx.state);
     LOG_INF("[BT-CB] conn_disconnected: conn=%p hid_ctx.conn=%p reason=0x%02x "
            "state=%d fallback_retry=%d\n",
            conn, hid_ctx.conn, reason, hid_ctx.state, hid_ctx.fallback_retry);
 
-    if (conn != hid_ctx.conn) {
+    struct bt_conn *mine=conn_take(conn);
+    if (!mine) {
         LOG_INF("[BT] Old ACL teardown complete (unowned conn, reason 0x%02x, "
                "state=%d)\n", reason, hid_ctx.state);
         /* If a fallback outgoing connect is waiting for ACL teardown, fire it now */
@@ -917,8 +923,7 @@ static void conn_disconnected(struct bt_conn *conn, uint8_t reason)
                         reason == 0x16 ? "LOCAL_HOST" : "OTHER";
     LOG_INF("[BT] Disconnected reason=0x%02x (%s)\n", reason, r_str);
 
-    bt_conn_unref(hid_ctx.conn);
-    hid_ctx.conn = NULL;
+    bt_conn_unref(mine);
 
     hid_ctx.ctrl_connected = false;
     hid_ctx.intr_connected = false;
@@ -1750,17 +1755,17 @@ int bt_hid_host_connect(const uint8_t *addr)
 
 void bt_hid_host_disconnect(void)
 {
-    LOG_INF("[BT] bt_hid_host_disconnect called (state=%d fallback_retry=%d)\n",
-           hid_ctx.state, hid_ctx.fallback_retry);
-    if (hid_ctx.conn) {
-        set_state(BT_HID_STATE_DISCONNECTING);
-        bt_conn_disconnect(hid_ctx.conn,
-                           BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-    }
+    struct bt_conn *c=conn_acquire();
+    if(c){set_state(BT_HID_STATE_DISCONNECTING);bt_conn_disconnect(c,BT_HCI_ERR_REMOTE_USER_TERM_CONN);bt_conn_unref(c);}
 }
 
+static bool force_busy;
 void bt_hid_host_force_disconnect(void)
 {
+    taskENTER_CRITICAL();
+    if(force_busy){taskEXIT_CRITICAL();return;}
+    force_busy=true;taskEXIT_CRITICAL();
+    link_diag_note(LINK_FORCE_DISCONNECT,hid_ctx.state,0);
     LOG_WRN("[BT] Force disconnect — HID cleanup, conn=%p\n", hid_ctx.conn);
 
     hid_ctx.ctrl_connected = false;
@@ -1786,12 +1791,8 @@ void bt_hid_host_force_disconnect(void)
     feature_cache_clear();
     dse_reset();
 
-    if (hid_ctx.conn) {
-        LOG_INF("[BT] Sending HCI Disconnect for ACL cleanup\n");
-        bt_conn_disconnect(hid_ctx.conn, 0x13);
-        bt_conn_unref(hid_ctx.conn);
-        hid_ctx.conn = NULL;
-    }
+    struct bt_conn *owned=conn_take(NULL);
+    if(owned){bt_conn_disconnect(owned,0x13);bt_conn_unref(owned);}
 
     bt_br_set_connectable(true);
     bt_br_set_discoverable(true);
@@ -1807,6 +1808,7 @@ void bt_hid_host_force_disconnect(void)
         hid_ctx.connect_pending_tick = (TickType_t)UINT32_MAX;
         LOG_INF("[BT] Fallback: outgoing connect pending (waiting for ACL teardown)\n");
     }
+    taskENTER_CRITICAL();force_busy=false;taskEXIT_CRITICAL();
 }
 
 bool bt_hid_host_has_pending_conn(void)
@@ -1816,13 +1818,13 @@ bool bt_hid_host_has_pending_conn(void)
 
 void bt_hid_host_drop_stale_conn(void)
 {
-    if (!hid_ctx.conn)
+    struct bt_conn *owned=conn_take(NULL);
+    if (!owned)
         return;
 
     LOG_WRN("[BT] conn_disconnected never arrived — force cleanup\n");
 
-    bt_conn_unref(hid_ctx.conn);
-    hid_ctx.conn = NULL;
+    bt_conn_unref(owned);
 
     hid_ctx.ctrl_connected = false;
     hid_ctx.intr_connected = false;

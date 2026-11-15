@@ -6,12 +6,13 @@
 
 | ID | 方向 | data 字节数 | 用途 |
 | --- | --- | --- | --- |
+| 0xF3 | SET / GET | 63 | 宏、绑定与输入链路诊断 |
 | 0xFA | GET | 63 | 四档绑定、当前选择、全局快捷动作 |
 | 0xFC | SET / GET | 63 | 命令 / 当前编辑档与回执 |
 | 0xFD | GET | 63 | IMU、映射与校准状态 |
 | 0xFE | GET | 63 | 接收器处理链路统计 |
 
-DS / DSE HID 描述符为 361 / 477 字节。键盘/鼠标复合接口始终枚举，FS / HS 端点周期均为 1ms。WebHID 的 `sendFeatureReport(id, data)` 只传 data；`receiveFeatureReport(id)` 返回 64 字节，首字节为 ID，网页校验 ID 与足长包。
+DS / DSE HID 描述符为 371 / 487 字节。键盘/鼠标复合接口始终枚举，FS / HS 端点周期均为 1ms。WebHID 的 `sendFeatureReport(id, data)` 只传 data；`receiveFeatureReport(id)` 返回 64 字节，首字节为 ID，网页校验 ID 与足长包。
 
 SET 在 USB ISR 中放入深度 8 的统一队列，由 usb_task 顺序执行，GET 读取双缓冲快照。新客户端每次只发一个命令，等待命令和序号同时匹配的回执后再发下一条。序号建议 1–255 循环；队列满无回执，通过 0xFE 计数和客户端超时诊断。网页超时为 2.5 秒。
 
@@ -22,7 +23,7 @@ data[0] 命令，data[1] 序号，以下未用字节补零至 63。
 | 命令 | 参数与行为 |
 | --- | --- |
 | 1 | data[2..41]：40 字节配置；校验通过后应用到当前编辑档；编辑档正生效时立即更新引擎 |
-| 2 | 保存四档与全局设置；不保存零偏，内容相同不重复写 |
+| 2 | 保存四档与全局设置；手动零偏在校准成功时独立保存，内容相同不重复写 |
 | 3 | 开始静止校准 |
 | 4 | 当前编辑档恢复默认到 RAM，不自动保存 |
 | 5 | 清除手动零偏，保留工厂标定 |
@@ -153,3 +154,26 @@ F6 命令 1 应用 config，2 保存，3 保存成功后复位。FB 命令 1 设
 - 旧 `gyro_cfg_v1`：仅用于无有效 G2 bank 时迁移，不再覆盖写入。
 
 这些记录只保存配置，不保存配对密钥、IMU 零偏或当前临时暂停/精瞄状态。
+
+## G2.4RC1：0xF3 宏接口
+
+独立于 0xFC，旧版固件没有这个 Feature。请求为 `command, sequence, slot, offset:u16, count:u8, data[57]`，共 63 字节。响应共 63 字节：`version=1, command, sequence, result, slot, playing_slot, flags, count, offset:u16, total:u16, data[51]`。结果 0 成功、1 无效、2 存储失败、3 忙碌／未连接；playing_slot 255 表示停止。每个请求都在 usb_task 执行，ISR 只复制已发布响应。
+
+| 命令 | 用途 |
+| --- | --- |
+| 0 | 能力及可用空间；data 含 free:u32、max_bytes:u16、max_steps:u16、slots、bindings、当前体感档、蓝牙连接状态 |
+| 1 | 从 slot 的 offset 读取至多 51 字节；total=0 表示空槽 |
+| 2 / 3 / 4 | 开始宏上传（offset=总长度）／顺序写入（count<=57，offset 必须为累计已收字节）／校验并保存 |
+| 5 | 删除一个宏；运行中的同槽宏先停止 |
+| 6 | 分块读绑定；total=192 |
+| 8 / 9 / 10 | 开始绑定上传（offset=192）／顺序写入／验证并保存后应用 |
+| 11 / 12 | 测试已保存的单次宏／停止并释放宏输出 |
+| 15 | offset=1 暂停宏用于录制并刷新 3 秒心跳；offset=0 结束录制暂停 |
+| 20 | 分块读 126 字节的原始 63 字节输入和映射后 63 字节输出；offset=0 冻结一次快照 |
+| 21 | 分块读 400 字节 BTL1 日志；offset=0 冻结一次快照 |
+
+MAC1 使用 DS5DongleRE 的实际 C 布局：36 字节头、每步 6 字节、末尾 CRC16-CCITT（初值 0xFFFF，poly 0x1021）。头为 magic:u32=0x4D414331、version:u8=1、mode:u8、repeat:u8、reserved:u8、pause_ms:u16、step_count:u16、name[24]。mode 0 单次、1 按住循环、2 本项目新增开关循环；每步为 act/key/edge/reserved/delay_ms:u16。act 0 等待、1 键盘、2 鼠标、3 手柄，edge 0 松开／1 按下。手柄目标支持原项目编号 0..18、31..34（Edge）。摇杆／模拟扳机动作未定义，导入时拒绝。
+
+每条绑定 12 字节：物理按键 mask:u32（沿用 0xFC 的 24 位编号）、macro_slot:u8、gesture:u8（按下／松开／长按／双击／三击）、profile_mask:u8（0 为全部）、flags:u8（bit0 启用、bit1 屏蔽原键）、hold_ms:u16、tap_ms:u16。16 条共 192 字节。按住循环必须有仍处于按住状态的有效绑定，不能从网页启动无来源的永久按住宏。
+
+BTL1 日志头 16 字节：magic[4]、累计事件数:u32、有效数:u32、reserved:u32。随后 24 个按时间顺序排列的 16 字节条目：device_ms/event/value/detail 各 u32。事件 1 连接建立、2 断连、3 强制拆链、4 无输入看门狗、5 原生 Feature 写入、6 Edge 快照齐全。时间为接收器 uptime_ms，不能直接当浏览器时间。

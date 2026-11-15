@@ -198,6 +198,16 @@ void gyro_clear_calibration(void)
     memset(motion.filtered, 0, sizeof(motion.filtered));
     memset(motion.pending, 0, sizeof(motion.pending));
 }
+bool gyro_get_calibration(float bias[3])
+{
+    if(!motion.calibrated||motion.calibrating)return false;
+    memcpy(bias,motion.bias,sizeof motion.bias);return true;
+}
+bool gyro_restore_calibration(const float bias[3])
+{
+    for(int i=0;i<3;i++)if(!isfinite(bias[i])||fabsf(bias[i])>20)return false;
+    gyro_clear_calibration();memcpy(motion.bias,bias,sizeof motion.bias);motion.calibrated=true;return true;
+}
 
 uint32_t gyro_buttons(const uint8_t *p, bool edge)
 {

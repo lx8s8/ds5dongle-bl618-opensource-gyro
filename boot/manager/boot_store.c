@@ -16,7 +16,7 @@ bool bm_decode(const uint8_t*p,bm_record*r){
   const uint8_t*q=p+16+i*64;bm_image*im=&v.image[i];
   im->address=u32(q);im->capacity=u32(q+4);im->image_length=u32(q+8);
   memcpy(im->sha256,q+12,32);memcpy(im->version,q+44,20);
-  if(im->address!=(i?0x210000u:0x10000u)||im->capacity!=(i?0x120000u:0x200000u)||
+  if(im->address!=(i?0x210000u:0x10000u)||im->capacity!=(i?0x120000u:0x140000u)||
      im->image_length<0x1004u||im->image_length>im->capacity||!memchr(im->version,0,20))return false;
  }
  *r=v;return true;
@@ -59,24 +59,25 @@ bool bm_partition_select(const bm_flash*f,uint8_t slot){
  if(slot>1||(!valid[0]&&!valid[1]))return false;
  if(valid[0]&&valid[1]&&u32(tables[0]+8)==u32(tables[1]+8)&&memcmp(tables[0],tables[1],16+u16(tables[0]+6)*36+4))return false;
  int old=valid[1]&&(!valid[0]||u32(tables[1]+8)>u32(tables[0]+8));memcpy(next,tables[old],PT_SIZE);
- const char*names[]={"FW","PSM","KEY","DATA"};
- const uint32_t addresses[4][2]={{0x10000,0x210000},{0x330000,0x3E9000},{0x338000,0x3F1000},{0x33A000,0x3F3000}};
- const uint32_t lengths[4][2]={{0x200000,0x120000},{0x8000,0x8000},{0x2000,0x2000},{0x5000,0x5000}};
+ const char*names[]={"FW","PSM","KEY","DATA","media"};
+ const uint32_t addresses[5][2]={{0x10000,0x210000},{0x330000,0x3E9000},{0x338000,0x3F1000},{0x33A000,0x3F3000},{0x150000,0x378000}};
+ const uint32_t lengths[5][2]={{0x140000,0x120000},{0x8000,0x8000},{0x2000,0x2000},{0x5000,0x5000},{0x71000,0x71000}};
+ const uint8_t kinds[5]={0,3,4,5,2};
  bool changed=false;
- for(int k=0;k<4;k++){
+ for(int k=0;k<5;k++){
   int i=entry(next,names[k]);if(i<0)return false;uint8_t*p=next+16+i*36;
-  if(p[0]!=(k? k+2:0)||p[1]||u32(p+12)!=addresses[k][0]||u32(p+16)!=addresses[k][1]||
+  if(p[0]!=kinds[k]||p[1]||u32(p+12)!=addresses[k][0]||u32(p+16)!=addresses[k][1]||
      u32(p+20)!=lengths[k][0]||u32(p+24)!=lengths[k][1]||p[2]>1)return false;
   if(p[2]!=slot){p[2]=slot;changed=true;}
  }
  /* Reject all other nonzero extents intersecting either application or either
   * writable bank. Installation removes the legacy overlapping mfg entry. */
  for(int i=0;i<u16(next+6);i++){
-  uint8_t*p=next+16+i*36;bool managed=false;for(int k=0;k<4;k++)if(i==entry(next,names[k]))managed=true;
+  uint8_t*p=next+16+i*36;bool managed=false;for(int k=0;k<5;k++)if(i==entry(next,names[k]))managed=true;
   if(managed)continue;
   for(int j=0;j<2;j++){uint32_t a=u32(p+12+4*j),n=u32(p+20+4*j);if(!n)continue;
    if(a>0x400000u||n>0x400000u-a)return false;
-   for(int k=0;k<4;k++)for(int l=0;l<2;l++)if(a<addresses[k][l]+lengths[k][l]&&a+n>addresses[k][l])return false;
+   for(int k=0;k<5;k++)for(int l=0;l<2;l++)if(a<addresses[k][l]+lengths[k][l]&&a+n>addresses[k][l])return false;
   }
  }
  if(!changed)return true;

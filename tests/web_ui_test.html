@@ -4,18 +4,32 @@
 <script type="module">
 // Explicit fake HID device; no hardware is accessed. Serve the repository root.
 import { defaults, encodeConfig, decodeConfig, globalDefaults, encodeGlobal, decodeGlobal } from '../web/protocol.mjs';
+import {encodeMacro,decodeMacro,emptyRules,encodeRules} from '../web/macros.mjs';
 import {receiverDefaults,encodeReceiver,decodeReceiver,remapDefaults,encodeRemap,decodeRemap} from '../web/receiver-protocol.mjs';
 await new Promise(resolve=>document.getElementById('runUITest').addEventListener('click',resolve,{once:true}));
 let receiver=receiverDefaults(),remap=[remapDefaults(),remapDefaults()],remapRead=0,remapActive=0,legacyAck=[0,0,0,0],receiverSaves=0;
 let profiles = Array.from({ length: 4 }, defaults), settings = globalDefaults(), edit = 2, active = 0, ack = [0, 0, 0], saveFails = false, saves = 0, statusFlags = 27;
 const commands = [], outputs = [];
+let macroReply=new Uint8Array(63),macroFiles=Array.from({length:16},()=>new Uint8Array()),macroRules=encodeRules(emptyRules()),macroStage,macroActive=255;
+function macroCommand(p){const cmd=p[0],slot=p[2],offset=p[3]|p[4]<<8;const r=macroReply=new Uint8Array(63);r.set([1,cmd,p[1],0,slot,macroActive]);r[8]=offset&255;r[9]=offset>>8;let bytes;
+ if(cmd===0){r[7]=12;new DataView(r.buffer).setUint32(12,400000,true);}
+ if(cmd===1)bytes=macroFiles[slot];if(cmd===6)bytes=macroRules;
+ if(cmd===20){bytes=new Uint8Array(126);bytes.fill(128,0,4);bytes[7]=8;bytes[32]=bytes[36]=128;bytes.set(bytes.slice(0,63),63);}
+ if(cmd===21){bytes=new Uint8Array(400);bytes.set(new TextEncoder().encode('BTL1'));}
+ if(bytes){r[10]=bytes.length&255;r[11]=bytes.length>>8;const chunk=bytes.slice(offset,offset+51);r[7]=chunk.length;r.set(chunk,12);}
+ if(cmd===2||cmd===8)macroStage=new Uint8Array(offset);
+ if(cmd===3||cmd===9)macroStage.set(p.slice(6,6+p[5]),offset);
+ if(cmd===4){decodeMacro(macroStage);macroFiles[slot]=macroStage.slice();}
+ if(cmd===10)macroRules=macroStage.slice();if(cmd===5)macroFiles[slot]=new Uint8Array();if(cmd===11)macroActive=slot;if(cmd===12)macroActive=255;
+}
 class FakeDevice extends EventTarget {
   opened = false; productName = 'SIMULATED DS5 GYRO'; productId = 0x0DF2;
-  collections = [{ featureReports: [0xFA, 0xFC, 0xFD, 0xFE].map(reportId => ({ reportId })) }];
+  collections = [{ featureReports: [0xF3,0xFA, 0xFC, 0xFD, 0xFE].map(reportId => ({ reportId })) }];
   async open() { this.opened = true; }
   async close() { this.opened = false; }
   async sendReport(id, bytes) { check(id===2&&bytes.length===47,'full-length output report'); outputs.push(bytes.slice()); }
   async sendFeatureReport(id, bytes) {
+    if(id===0xF3){macroCommand(bytes);return;}
     if(id===0xF6||id===0xFB){
       check(bytes.length===(id===0xFB?127:63),'legacy full-length SET_REPORT');legacyAck=[bytes[0],0,bytes.at(-1),id];
       if(id===0xF6&&bytes[0]===1)receiver=decodeReceiver(bytes.slice(1,30));
@@ -35,6 +49,7 @@ class FakeDevice extends EventTarget {
     if (bytes[0] === 8) { settings = decodeGlobal(bytes.slice(2, 59)); active = settings.source === 1 ? settings.edge[1] : settings.source === 2 ? settings.dongle[0] : settings.manual; }
   }
   async receiveFeatureReport(id) {
+    if(id===0xF3){const a=new Uint8Array(64);a[0]=id;a.set(macroReply,1);return new DataView(a.buffer);}
     if(id===0xFB){const a=new Uint8Array(128);a[0]=id;a[1]=remapActive;a[2]=remapRead;a.set(encodeRemap(remap[remapRead]),3);return new DataView(a.buffer);}
     const bytes = new Uint8Array(64); bytes[0] = id;
     if(id===0xF7){bytes.set(encodeReceiver(receiver),1);bytes.set(legacyAck,41);}
@@ -124,6 +139,14 @@ try {
   location.hash='#config';await waitFor(()=>!$('config').hidden);change('output','2');change('stickPower','2');check($('curveUnits').textContent.includes('摇杆'),'stick response curve follows edited output');change('activation','2');const buttons=$('buttons').querySelector('[data-bit="22"]');buttons.checked=true;check($('activation').value==='2','toggle activation can bind independent rear button');
   const data=new Uint8Array(63);data.fill(128,0,4);data[0]=255;data[4]=255;data[7]=0x28;data[32]=128;data[36]=128;const event=new Event('inputreport');event.reportId=1;event.data=new DataView(data.buffer);fake.dispatchEvent(event);await waitFor(()=>$('l2Value').textContent==='100%');check($('controllerVisual').querySelector('[data-bit="1"]').classList.contains('pressed'),'controller diagram follows real input events');check($('leftStickValue').textContent.includes('1.000'),'stick visualization follows USB input');
   location.hash='#tester';await waitFor(()=>!$('tester').hidden);
+  location.hash='#macros';await waitFor(()=>!$('macros').hidden);check(!$('macroSave').disabled,'macro capability detected');
+  $('macroName').value='UI macro';$('macroAddDown').click();$('macroAddUp').click();check($('macroSteps').children.length===2,'macro step editor adds press/release');
+  const macroType=$('macroSteps').querySelector('select');macroType.value='1';macroType.dispatchEvent(new Event('change'));check([...$('macroSteps').querySelectorAll('select')[1].options].some(o=>o.textContent==='F13'&&o.value==='104'),'extended HID keyboard code F13');
+  $('macroSave').click();await ready();check(decodeMacro(macroFiles[0]).steps.length===2,'macro upload and persisted readback');
+  $('macroTest').click();await ready();check(macroActive===0,'single macro test starts stored slot');$('macroStop').click();await waitFor(()=>macroActive===255);check(macroActive===255,'stop command releases playback');
+  const binding=$('macroBindings').querySelector('details');binding.querySelector('input[type=checkbox]').checked=true;binding.querySelector('[data-bit="19"]').checked=true;binding.dispatchEvent(new Event('change',{bubbles:true}));
+  $('macroRulesSave').click();await ready();check((new DataView(macroRules.buffer).getUint32(0,true)&(1<<19))!==0,'Edge Fn binding saved');
+  $('macroDelete').click();await ready();check(!macroFiles[0].length,'macro slot deletion acknowledged');
   location.hash='#update';await waitFor(()=>!$('update').hidden);
   const oldPicker=hid.requestDevice;let bootSelected=0,bootOpened=false,bootAck=[0,0];
   const bootFake={vendorId:0x1209,productId:1,productName:'SIMULATED BOOT MANAGER',collections:[{usagePage:0xFF00,featureReports:[{reportId:0x70}]}],

@@ -44,4 +44,16 @@ derived from the following third-party works:
    Used as a protocol/offset reference only. No kernel code is incorporated
    into this project.
 
-All other code is original to this project and licensed under GPL-3.0.
+6. NiceTimeJob/DS5DongleRE (GPL-3.0)
+   https://github.com/NiceTimeJob/DS5DongleRE
+   Source reviewed at commit 6f5035d (2026-11-09).
+   Macro MAC1 format, single-player scheduling model, LittleFS storage model,
+   explicit gyro-bias persistence and Bluetooth connection-ownership handling
+   are adapted from firmware/src/ds5map.[ch], macro_store.[ch], gyro.[ch] and
+   bt_hid_host.c. Our integration keeps the existing Sony/Edge descriptors,
+   gyro profiles and configuration protocol. New framing, validation, atomic
+   replacement, cancellation rules and web editor are specific to this project.
+   The original project is itself derived from sqlCRT/ds5dongle-bl618-opensource.
+   Its GPL-3.0 license is provided by this repository's LICENSE file.
+
+Remaining project code is licensed under GPL-3.0.

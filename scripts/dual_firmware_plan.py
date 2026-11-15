@@ -14,9 +14,9 @@ import zlib
 FLASH_SIZE = 0x400000
 ROOT_LIMIT = 0xE000
 SLOT_ADDRESS = (0x10000, 0x210000)
-SLOT_CAPACITY = (0x200000, 0x120000)
-DATA_ADDRESS = ((0x330000, 0x338000, 0x33A000), (0x3E9000, 0x3F1000, 0x3F3000))
-DATA_LENGTH = (0x8000, 0x2000, 0x5000)
+SLOT_CAPACITY = (0x140000, 0x120000)
+DATA_ADDRESS = ((0x330000, 0x338000, 0x33A000, 0x150000), (0x3E9000, 0x3F1000, 0x3F3000, 0x378000))
+DATA_LENGTH = (0x8000, 0x2000, 0x5000, 0x71000)
 RECORD_ADDRESS = (0x340000, 0x341000)
 PT_ADDRESS = (0xE000, 0xF000)
 
@@ -71,6 +71,7 @@ def encode_partition(entries, age=0):
 
 def expected_stock(entries):
     required = {'FW': (0, [0x10000, 0x210000], [0x200000, 0x168000]),
+                'media': (2, [0x378000, 0], [0x71000, 0]),
                 'PSM': (3, [0x3E9000, 0], [0x8000, 0]), 'KEY': (4, [0x3F1000, 0], [0x2000, 0]),
                 'DATA': (5, [0x3F3000, 0], [0x5000, 0]), 'factory': (6, [0x3F8000, 0], [0x8000, 0])}
     by_name = {e['name']: e for e in entries}
@@ -159,8 +160,8 @@ def install(current, manager, gyro, upstream, versions, upstream_snapshot=None):
     for e in entries:
         if e['name'] == 'FW':
             e['sizes'] = list(SLOT_CAPACITY)
-        elif e['name'] in ('PSM', 'KEY', 'DATA'):
-            j = ('PSM', 'KEY', 'DATA').index(e['name'])
+        elif e['name'] in ('PSM', 'KEY', 'DATA', 'media'):
+            j = ('PSM', 'KEY', 'DATA', 'media').index(e['name'])
             e['addresses'] = [DATA_ADDRESS[0][j], DATA_ADDRESS[1][j]]
             e['sizes'] = [DATA_LENGTH[j]] * 2
         e['active'] = 0

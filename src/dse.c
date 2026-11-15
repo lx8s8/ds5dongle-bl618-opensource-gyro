@@ -3,6 +3,7 @@
 #include "debug_log.h"
 #include <string.h>
 #include "bflb_mtimer.h"
+#include "link_diag.h"
 
 static int      unlock_phase      = 0;
 static uint64_t unlock_started_us = 0;
@@ -15,12 +16,23 @@ static int      post_save_round      = 0;
 static uint8_t  prefetch_next        = 0;
 static uint64_t prefetch_last_us     = 0;
 static bool     prefetch_mark_ready  = false;
+static uint16_t prefetch_received, prefetch_sent;
+static volatile bool refresh_requested;
 
 static void prefetch_start(bool mark_ready_after)
 {
     prefetch_next       = 0x70;
     prefetch_last_us    = 0;
     prefetch_mark_ready = mark_ready_after;
+    prefetch_received = prefetch_sent = 0;
+    if(mark_ready_after)profiles_ready=false;
+}
+void dse_on_feature_received(uint8_t report_id,uint16_t length)
+{
+    if(prefetch_next&&report_id>=0x70&&report_id<=0x7B&&length>=63){
+        uint16_t bit=(uint16_t)(1u<<(report_id-0x70));
+        if(prefetch_sent&bit)prefetch_received|=bit;
+    }
 }
 
 bool dse_is_profile_report(uint8_t report_id)
@@ -69,14 +81,14 @@ void dse_on_control_packet(const uint8_t *pkt, uint16_t size)
 void dse_on_profile_write(uint8_t report_id)
 {
     if (report_id >= 0x60 && report_id <= 0x62) {
-        profile_written_us = bflb_mtimer_get_time_us();
-        post_save_round    = 0;
+        refresh_requested=true;
     }
 }
 
 void dse_task(void)
 {
     uint64_t now_us = bflb_mtimer_get_time_us();
+    if(refresh_requested){refresh_requested=false;profile_written_us=now_us;post_save_round=0;profiles_ready=false;}
 
     /* --- Paced prefetch sequencer: one profile GET per 80 ms --- */
     if (prefetch_next != 0) {
@@ -87,16 +99,25 @@ void dse_task(void)
         }
         if (now_us - prefetch_last_us >= 80000ULL) {
             prefetch_last_us = now_us;
-            bt_hid_host_get_feature(prefetch_next);
-            if (prefetch_next == 0x7B) {
+            if(prefetch_received==0x0FFF){
                 prefetch_next = 0;
                 if (prefetch_mark_ready) {
                     prefetch_mark_ready = false;
                     profiles_ready      = true;
+                    link_diag_note(LINK_EDGE_READY,prefetch_received,0);
                     LOG_INF("[DSE] Profile snapshot ready\n");
                 }
             } else {
-                prefetch_next++;
+                /* Retry only missing responses, including failed sends. The
+                 * last GET being queued does not mean the snapshot exists. */
+                for(int i=0;i<12;i++){
+                    uint16_t bit=(uint16_t)(1u<<(prefetch_next-0x70));
+                    uint8_t rid=prefetch_next;prefetch_next=rid==0x7B?0x70:(uint8_t)(rid+1);
+                    if(!(prefetch_received&bit)){
+                        if(bt_hid_host_get_feature(rid)==0)prefetch_sent|=bit;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -124,7 +145,7 @@ void dse_task(void)
             bt_hid_host_get_feature(0x81);
             post_save_round++;
         } else if (post_save_round == 7 && since_write_us >= 5500000ULL) {
-            prefetch_start(false);
+            prefetch_start(true);
             post_save_round    = 8;
             profile_written_us = 0;
             LOG_INF("[DSE] Post-save: profile snapshot refetch started\n");
@@ -159,4 +180,6 @@ void dse_reset(void)
     prefetch_next       = 0;
     prefetch_last_us    = 0;
     prefetch_mark_ready = false;
+    prefetch_received = prefetch_sent = 0;
+    refresh_requested=false;
 }

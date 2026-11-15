@@ -56,6 +56,7 @@ class DualFirmwarePlanTests(unittest.TestCase):
         self.assertEqual(after[0x10000:0x10000 + len(self.gyro)], self.gyro)
         self.assertEqual(after[0x210000:0x210000 + len(self.upstream)], self.upstream)
         self.assertEqual(after[0x330000:0x33F000], b'\x42' * 0xF000)
+        self.assertEqual(after[0x150000:0x1C1000], self.before[0x378000:0x3E9000])
         self.assertEqual(after[0x3E9000:0x3F8000], b'\x91' * 0xF000)
         self.assertEqual(after[0x3F8000:], self.before[0x3F8000:])
         _, entries = d.active_partition(after)
@@ -65,6 +66,7 @@ class DualFirmwarePlanTests(unittest.TestCase):
     def test_restore_original_boot_chain_and_selected_bank(self):
         after = bytearray(self.install())
         after[0x330000:0x33F000] = b'\x73' * 0xF000
+        after[0x150000:0x1C1000] = b'\x27' * 0x71000
         for slot, fw, value in ((0, self.gyro, 0x73), (1, self.upstream, 0x42)):
             restored = d.restore(bytes(after), self.before, slot)
             self.assertEqual(restored[:0x10000], self.before[:0x10000])
@@ -72,6 +74,7 @@ class DualFirmwarePlanTests(unittest.TestCase):
             self.assertEqual(restored[0x210000:0x378000], self.before[0x210000:0x378000])
             self.assertEqual(restored[0x3E9000:0x3F8000], bytes([value]) * 0xF000)
             self.assertEqual(restored[0x3F8000:], self.before[0x3F8000:])
+            self.assertEqual(restored[0x378000:0x3E9000], bytes([0x27])*0x71000 if slot==0 else self.before[0x378000:0x3E9000])
             d.expected_stock(d.active_partition(restored)[1])
 
     def test_rejects_unsupported_images_layouts_and_corruption(self):
@@ -90,7 +93,7 @@ class DualFirmwarePlanTests(unittest.TestCase):
         after = bytearray(self.install())
         _, entries = d.active_partition(after)
         for e in entries:
-            if e['name'] in ('FW', 'PSM', 'KEY', 'DATA'): e['active'] = 1
+            if e['name'] in ('FW', 'PSM', 'KEY', 'DATA', 'media'): e['active'] = 1
         after[0xF000:0x10000] = d.encode_partition(entries, age=10)
         after[0xE000:0xF000] = self.before[0xE000:0xF000]
         # A typical updater replacing only PT0 still leaves PT1 selected.

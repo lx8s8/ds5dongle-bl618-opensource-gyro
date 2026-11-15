@@ -11,6 +11,9 @@
 #include "gyro_runtime.h"
 #include "dongle_control.h"
 #include "diagnostics.h"
+#include "macro_runtime.h"
+#include "hid_mix.h"
+#include "link_diag.h"
 #include "usbd_core.h"
 #include "usbd_hid.h"
 #include "bl616_glb.h"
@@ -27,14 +30,14 @@
 
 #if defined(BOARD_LCTECH_616)
   #ifdef FORCE_FS_MODE
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.4" USB_IDENTITY_SUFFIX
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.4RC1" USB_IDENTITY_SUFFIX
   #else
-    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.4H" USB_IDENTITY_SUFFIX
+    #define FIRMWARE_VERSION "LCT616-DS5 3.18G2.4RC1H" USB_IDENTITY_SUFFIX
   #endif
 #elif defined(BOARD_M0S_DOCK)
-#define FIRMWARE_VERSION "M0S-DS5 3.5G2.4" USB_IDENTITY_SUFFIX
+#define FIRMWARE_VERSION "M0S-DS5 3.5G2.4RC1" USB_IDENTITY_SUFFIX
 #else
-#define FIRMWARE_VERSION "BL618-DS5 3.5G2.4" USB_IDENTITY_SUFFIX
+#define FIRMWARE_VERSION "BL618-DS5 3.5G2.4RC1" USB_IDENTITY_SUFFIX
 #endif
 
 #define USBD_MAX_POWER      250
@@ -45,8 +48,8 @@
 #define USB_HID_ONLY_SIZE (9 + 9 + 7 + USB_KBD_DESC_SIZE)
 #define USB_AUDIO_DESC_SIZE 186
 #define USB_HID_CONFIG_SIZE (9 + USB_AUDIO_DESC_SIZE + USB_HID_ONLY_SIZE)
-#define HID_REPORT_DESC_SIZE_DS  361
-#define HID_REPORT_DESC_SIZE_DSE 477
+#define HID_REPORT_DESC_SIZE_DS  371
+#define HID_REPORT_DESC_SIZE_DSE 487
 #define KBD_REPORT_DESC_SIZE 138  /* Keyboard + Consumer + Mouse */
 
 static bool current_dse_mode = false;
@@ -68,6 +71,7 @@ static QueueHandle_t set_report_queue = NULL;
 /* Pending feature GET request, deferred from ISR to task context.
  * 0 = no pending request. Written by ISR, consumed by process_deferred(). */
 static volatile uint8_t pending_feature_rid = 0;
+static void flush_kbd(void);
 
 /* DualSense USB HID Report Descriptor (321 bytes) */
 static const uint8_t hid_report_desc_ds[HID_REPORT_DESC_SIZE_DS] = {
@@ -239,6 +243,7 @@ static const uint8_t hid_report_desc_ds[HID_REPORT_DESC_SIZE_DS] = {
     0x95, 0x7F,       /*   Report Count (127) — 31 entries * 4 + header */
     0xB1, 0x02,
 
+    0x85, 0xF3, 0x09, 0x40, 0x95, 0x3F, 0xB1, 0x02, 0x75, 0x08, /* macros */
     0x85, 0xFA, 0x09, 0x3B, 0x95, 0x3F, 0xB1, 0x02, /* profiles/actions */
     0x85, 0xFE, 0x09, 0x3F, 0x95, 0x3F, 0xB1, 0x02, /* diagnostics */
     0x85, 0xFC, 0x09, 0x3D, 0x95, 0x3F, 0xB1, 0x02, /* gyro config */
@@ -317,6 +322,7 @@ static const uint8_t hid_report_desc_dse[HID_REPORT_DESC_SIZE_DSE] = {
     0x85, 0xF8, 0x09, 0x39, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xF9, 0x09, 0x3A, 0x95, 0x3F, 0xB1, 0x02,
     0x85, 0xFB, 0x09, 0x3C, 0x95, 0x7F, 0xB1, 0x02,  /* button remap table (127B) */
+    0x85, 0xF3, 0x09, 0x40, 0x95, 0x3F, 0xB1, 0x02, 0x75, 0x08, /* macros */
     0x85, 0xFA, 0x09, 0x3B, 0x95, 0x3F, 0xB1, 0x02, /* profiles/actions */
     0x85, 0xFE, 0x09, 0x3F, 0x95, 0x3F, 0xB1, 0x02, /* diagnostics */
     0x85, 0xFC, 0x09, 0x3D, 0x95, 0x3F, 0xB1, 0x02,
@@ -687,6 +693,7 @@ static void usbd_event_handler(uint8_t busid, uint8_t event)
     switch (event) {
     case USBD_EVENT_CONFIGURED:
         usb_configured = true;
+        hid_mix_resend();
         ep_in_busy = false;
         kbd_ep_busy = false;
         LOG_INF("[USB-EVT] CONFIGURED — host enumeration complete!\n");
@@ -778,6 +785,7 @@ void usb_gamepad_process_deferred(void)
             gyro_runtime_command(entry.data, entry.len);
             continue;
         }
+        if(entry.report_id==MACRO_REPORT_ID){macro_runtime_command(entry.data,entry.len);continue;}
         if (entry.report_id == 0xF6 || entry.report_id == 0xFB) {
             uint8_t effects = dongle_control_command(entry.report_id, entry.data, entry.len);
             if (effects & DONGLE_CONFIG_CHANGED) {
@@ -792,16 +800,20 @@ void usb_gamepad_process_deferred(void)
         }
         LOG_INF("[USB] Deferred SET_REPORT(0x%02x) → BT, %u bytes%s\n",
                entry.report_id, entry.len, entry.is_dse ? " (DSE)" : "");
-        bt_hid_host_set_feature_crc(entry.report_id, entry.data, entry.len);
+        link_diag_note(LINK_HOST_FEATURE,entry.report_id,entry.len?entry.data[0]:0);
+        if(bt_hid_host_set_feature_crc(entry.report_id, entry.data, entry.len)==0)
+            dse_on_profile_write(entry.report_id);
     }
     remap_poll((uint32_t)bflb_mtimer_get_time_us());
     dongle_control_publish();
+    flush_kbd();
 }
 
 int usb_gamepad_init(usb_gamepad_output_cb_t output_cb)
 {
     output_callback = output_cb;
     dongle_control_init();
+    hid_mix_init();
     memset(usb_in_buf, 0, sizeof(usb_in_buf));
     memset(kbd_buf, 0, sizeof(kbd_buf));
 
@@ -992,65 +1004,42 @@ bool usb_gamepad_is_ready(void)
 }
 
 
-int usb_gamepad_send_kbd_report(const uint8_t *report, uint8_t len)
+static void flush_kbd(void)
 {
-    if (!usb_configured || !kbd_registered || kbd_ep_busy)
-        return -1;
-    kbd_buf[0] = 0x01; /* Report ID 1 = Keyboard */
-    uint8_t copy = (len > 8) ? 8 : len;
-    memcpy(kbd_buf + 1, report, copy);
-    if (copy < 8)
-        memset(kbd_buf + 1 + copy, 0, 8 - copy);
-    kbd_ep_busy = true;
-    kbd_ep_busy_since_us = bflb_mtimer_get_time_us();
-    int ret = usbd_ep_start_write(0, USB_KBD_EP_IN, kbd_buf, 9);
-    if (ret < 0)
-        kbd_ep_busy = false;
-    return ret;
+    if(!usb_configured||!kbd_registered)return;
+    uintptr_t irq=bflb_irq_save();
+    hid_mix_tick((uint32_t)(bflb_mtimer_get_time_us()/1000));
+    if(!kbd_ep_busy){
+        unsigned n=hid_mix_peek(kbd_buf);
+        if(n){
+            kbd_ep_busy=true;
+            int result=usbd_ep_start_write(0,USB_KBD_EP_IN,kbd_buf,n);
+            if(result<0)kbd_ep_busy=false;else hid_mix_accept();
+        }
+    }
+    bflb_irq_restore(irq);
 }
-
+int usb_gamepad_send_kbd_report(const uint8_t *report,uint8_t len)
+{
+    if(!usb_configured||!kbd_registered)return -1;
+    uint8_t keys[8]={0};memcpy(keys,report,len>8?8:len);
+    hid_mix_keyboard(keys);flush_kbd();return 0;
+}
 int usb_gamepad_send_consumer_report(uint16_t bits)
 {
-    if (!usb_configured || !kbd_registered || kbd_ep_busy)
-        return -1;
-    kbd_buf[0] = 0x02; /* Report ID 2 = Consumer Control */
-    kbd_buf[1] = bits & 0xFF; /* bit0=VolUp, bit1=VolDn, bit2=Mute */
-    kbd_ep_busy = true;
-    kbd_ep_busy_since_us = bflb_mtimer_get_time_us();
-    int ret = usbd_ep_start_write(0, USB_KBD_EP_IN, kbd_buf, 2);
-    if (ret < 0)
-        kbd_ep_busy = false;
-    return ret;
+    if(!usb_configured||!kbd_registered)return -1;
+    hid_mix_consumer((uint8_t)bits);flush_kbd();return 0;
 }
-
-int usb_gamepad_send_mouse_report(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel)
+int usb_gamepad_send_mouse_report(uint8_t buttons,int8_t dx,int8_t dy,int8_t wheel)
 {
-    if (!usb_configured || !kbd_registered || kbd_ep_busy)
-        return -1;
-    kbd_buf[0] = 0x03; /* Report ID 3 = Mouse */
-    kbd_buf[1] = buttons;
-    kbd_buf[2] = (uint8_t)dx;
-    kbd_buf[3] = (uint8_t)dy;
-    kbd_buf[4] = (uint8_t)wheel;
-    kbd_ep_busy = true;
-    kbd_ep_busy_since_us = bflb_mtimer_get_time_us();
-    int ret = usbd_ep_start_write(0, USB_KBD_EP_IN, kbd_buf, 5);
-    if (ret < 0)
-        kbd_ep_busy = false;
-    return ret;
+    if(!usb_configured||!kbd_registered)return -1;
+    hid_mix_mouse(buttons,dx,dy,wheel);flush_kbd();return 0;
 }
-
-bool usb_gamepad_kbd_ready(void)
+void usb_gamepad_set_macro_report(const uint8_t keys[8],uint8_t buttons,int8_t wheel)
 {
-    /* Timeout: if kbd_ep_busy has been set for >20ms without completion,
-     * the host is not reading the endpoint. Force-clear to keep reporting. */
-    if (kbd_ep_busy && kbd_ep_busy_since_us &&
-        (bflb_mtimer_get_time_us() - kbd_ep_busy_since_us) > 20000ULL) {
-        kbd_ep_busy = false;
-        kbd_ep_busy_since_us = 0;
-    }
-    return usb_configured && kbd_registered && !kbd_ep_busy;
+    hid_mix_macro(keys,buttons,usb_configured?wheel:0);flush_kbd();
 }
+bool usb_gamepad_kbd_ready(void) { return usb_configured&&kbd_registered; }
 
 /* ---------- HID class request callbacks (Feature Report forwarding) ---------- */
 
@@ -1060,7 +1049,7 @@ static uint8_t kbd_idle_report[USB_KBD_EP_MPS];
 
 static bool is_dongle_cmd(uint8_t report_id)
 {
-    return (report_id >= 0xF6 && report_id <= 0xF9) || report_id == 0xFB ||
+    return report_id == MACRO_REPORT_ID || (report_id >= 0xF6 && report_id <= 0xF9) || report_id == 0xFB ||
            report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS ||
            report_id == GYRO_REPORT_PROFILES || report_id == GYRO_REPORT_DIAGNOSTICS;
 }
@@ -1167,7 +1156,8 @@ void usbd_hid_get_report(uint8_t busid, uint8_t intf, uint8_t report_id,
     if (is_dongle_cmd(report_id)) {
         feature_resp_buf[0] = report_id;
 
-        if (report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS ||
+        if(report_id==MACRO_REPORT_ID){macro_runtime_get(feature_resp_buf+1);*data=feature_resp_buf;*len=64;}
+        else if (report_id == GYRO_REPORT_CONFIG || report_id == GYRO_REPORT_STATUS ||
             report_id == GYRO_REPORT_PROFILES || report_id == GYRO_REPORT_DIAGNOSTICS) {
             if (report_id == GYRO_REPORT_CONFIG)
                 gyro_runtime_get_config(feature_resp_buf + 1);
@@ -1274,8 +1264,8 @@ void usbd_hid_set_report(uint8_t busid, uint8_t intf, uint8_t report_id,
     }
 
     /* All dongle mutations execute in usb_task. GET returns published snapshots. */
-    if (report_type == 0x03 && (report_id == GYRO_REPORT_CONFIG || report_id == 0xF6 || report_id == 0xFB)) {
-        bool valid = report_id == GYRO_REPORT_CONFIG ? payload_len == GYRO_REPORT_SIZE :
+    if (report_type == 0x03 && (report_id == MACRO_REPORT_ID || report_id == GYRO_REPORT_CONFIG || report_id == 0xF6 || report_id == 0xFB)) {
+        bool valid = (report_id == MACRO_REPORT_ID || report_id == GYRO_REPORT_CONFIG) ? payload_len == GYRO_REPORT_SIZE :
                      payload_len > 0 && payload_len <= (report_id == 0xFB ? 127u : 63u);
         BaseType_t ok = pdFALSE;
         if (valid && set_report_queue) {
@@ -1302,7 +1292,6 @@ void usbd_hid_set_report(uint8_t busid, uint8_t intf, uint8_t report_id,
         diagnostics_queue(ok == pdTRUE, (uint8_t)uxQueueMessagesWaitingFromISR(set_report_queue));
         LOG_ISR("[USB-ISR] SET_REPORT(DSE 0x%02x) queued=%d len=%lu\n",
                report_id, (int)(ok == pdTRUE), (unsigned long)payload_len);
-        dse_on_profile_write(report_id);
         return;
     }
 

@@ -16,7 +16,7 @@ int main(void){
  p32(memory+124,0x2000);p32(memory+252,bm_crc32(memory,252));
  memcpy(memory+0xFE0,"DS5-DBM1-ROOT\0\0\0",16);
  bm_record r={.generation=1,.selected=0};
- for(int i=0;i<2;i++){r.image[i].address=i?0x210000:0x10000;r.image[i].capacity=i?0x120000:0x200000;r.image[i].image_length=0x80000;}
+ for(int i=0;i<2;i++){r.image[i].address=i?0x210000:0x10000;r.image[i].capacity=i?0x120000:0x140000;r.image[i].image_length=0x80000;}
  bm_encode(&r,memory+BM_RECORD0);assert(boot_manager_request()&&mutations==3);
  bm_record out;assert(bm_decode(memory+BM_RECORD1,&out)&&out.manage==1&&out.selected==0);
  assert(boot_manager_request()&&mutations==3);

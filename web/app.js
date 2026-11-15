@@ -3,6 +3,7 @@ import { initLocalApp } from './local-app.mjs';
 import { HidTransport, requestReceiver } from './transport.mjs';
 import { initReceiverUI } from './receiver-ui.mjs';
 import { initTester } from './tester.mjs';
+import {initMacroUI} from './macro-ui.mjs';
 import {initBootManager} from './boot-manager.mjs';
 import { initReleases } from './releases.mjs';
 import { mouseSpeed, stickPosition } from './mapping-model.mjs';
@@ -10,7 +11,7 @@ import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
 import { DiagnosticCapture } from './diagnostic-capture.mjs';
 
 const $ = id => document.getElementById(id);
-let transport, receiverUI, tester;
+let transport, receiverUI, tester, macroUI;
 let device, busy = false, sequence = 0, live, samples = [], usbStick, metrics, diagnosticAt = 0, editSlot = 0, manualTouched = false;
 let drafts = Array.from({ length: 4 }, defaults);
 let reportedProfiles = [];
@@ -109,6 +110,7 @@ function controls() {
   $('manualSlot').disabled = busy || Number($('switchSource').value) !== 0;
   $('export').disabled = $('import').disabled = busy;
   receiverUI?.controls(!!device, busy);
+  macroUI?.controls(!!device,busy);
 }
 async function action(fn) { if (busy) return; busy = true; controls(); try { await fn(); } catch (e) { message(e.message || String(e), true); } finally { busy = false; controls(); refreshConfiguration(); } }
 async function receive(id) { if (!device?.opened) throw new Error('请先连接接收器'); return transport.read(id); }
@@ -127,7 +129,7 @@ async function readAll(followActive = false) {
   for (let i = 0; i < 4; i++) drafts[i] = await command(6, [i]);
   await command(6, [editSlot]); $('editSlot').value = editSlot; render(drafts[editSlot]); currentSlot(info.active);
 }
-function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) { usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; const bytes=new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength); capture.input(bytes); tester.updateInput(bytes); } }
+function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) { usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; const bytes=new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength); capture.input(bytes); tester.updateInput(bytes); macroUI?.input(bytes); } }
 $('connect').onclick = () => action(async () => {
   const candidate=await requestReceiver(navigator.hid);
   if (!candidate) return;
@@ -135,7 +137,7 @@ $('connect').onclick = () => action(async () => {
   if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('请选择接收器，并更新至支持体感配置的固件');
   await candidate.open(); device = candidate; transport = new HidTransport(candidate);
   try {
-    reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(true); await receiverUI.load(); device.addEventListener('inputreport', onInput);
+    reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(true); await receiverUI.load(); await macroUI.load().catch(e=>message(e.message,true)); device.addEventListener('inputreport', onInput);
     $('device').textContent = candidate.productName; $('connectionDot').classList.add('on'); samples = []; usbStick = metrics = null; diagnosticAt = 0; capture.reset();
     $('identityWarning').hidden = candidate.vendorId !== 0x1209 || candidate.productId !== 0x0001;
     try { const version = await transport.read(0xF8, null); $('firmware').textContent = new TextDecoder().decode(version).replace(/\0.*$/s, ''); }
@@ -144,6 +146,7 @@ $('connect').onclick = () => action(async () => {
   } catch (e) { await close(); throw e; }
 });
 async function close() {
+  await macroUI?.reset();
   await tester?.stop().catch(() => {});
   const previous = device, previousTransport = transport; device = null; transport = null; live = usbStick = metrics = null;
   if (previous) { previous.removeEventListener('inputreport', onInput); if (previousTransport) await previousTransport.close(); else if (previous.opened) await previous.close(); }
@@ -154,7 +157,7 @@ async function close() {
   ['interval', 'factory', 'calibration', 'stick'].forEach(id => { $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
 }
 $('disconnect').onclick = () => action(async () => { await close(); message('已断开连接'); });
-if (navigator.hid) navigator.hid.addEventListener('disconnect', e => { if (e.device === device) action(async () => { await close(); message('接收器已断开'); }); });
+if (navigator.hid) navigator.hid.addEventListener('disconnect', e => { if (e.device === device) close().then(()=>message('接收器已断开')).catch(err=>message(err.message,true)); });
 $('editSlot').onchange = () => action(async () => {
   const next = Number($('editSlot').value);
   try { drafts[editSlot] = formConfig(); if (device) await command(6, [next]); editSlot = next; render(drafts[editSlot]); }
@@ -183,7 +186,7 @@ $('import').onchange = e => action(async () => {
   const bundle = importBundle(JSON.parse(await file.text())); drafts = bundle.profiles; renderGlobal(bundle.settings); manualTouched = true; render(drafts[editSlot]); e.target.value = ''; message('已导入配置，请保存到设备');
 });
 $('csv').onclick = () => { const rows = ['time_ms,dt_us,flags,pitch_dps,yaw_dps,roll_dps,filtered_x_dps,filtered_y_dps,stick_x,stick_y,buttons,edge_profile,dongle_profile', ...samples.map(s => [s.time, s.dt, s.flags, ...s.rates, ...s.filtered, ...s.stick, s.buttons, s.edgeProfile, s.dongleProfile].join(','))]; download('ds5-gyro-debug.csv', rows.join('\n'), 'text/csv'); };
-$('exportDiagnostics').onclick = () => { if (!metrics) return message('暂无诊断数据', true); download('ds5-gyro-diagnostics.json', JSON.stringify({ version: 3, firmware: $('firmware').textContent, time: new Date().toISOString(), metrics, reportedProfiles, featureSamples:samples, capture:capture.snapshot() }), 'application/json'); };
+$('exportDiagnostics').onclick = () => { if (!metrics) return message('暂无诊断数据', true); download('ds5-gyro-diagnostics.json', JSON.stringify({ version: 3, firmware: $('firmware').textContent, time: new Date().toISOString(), metrics, reportedProfiles, featureSamples:samples, receiverTrace:macroUI?.snapshot(), capture:capture.snapshot() }), 'application/json'); };
 function draw() {
   const canvas = $('chart'), ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h); const history = samples.slice(-180), scale = Math.max(30, ...history.flatMap(s => s.rates.map(Math.abs)));
@@ -213,12 +216,14 @@ async function poll() {
       if (device === current && !busy && performance.now() - diagnosticAt >= 1000) { diagnosticAt = performance.now(); const data = await receive(DIAGNOSTIC_REPORT); if (device === current) { metrics = decodeDiagnostics(data); renderMetrics(metrics); } }
     } catch (e) { if (device === current) message(`读取失败：${e.message}`, true); }
   }
+  await macroUI?.poll();
   setTimeout(poll, 100);
 }
-const routes = ['receiver', 'remap', 'config', 'tester', 'update'];
+const routes = ['receiver', 'remap', 'macros', 'config', 'tester', 'update'];
 function route() {
   const target=location.hash.slice(1);
   const active=routes.includes(target)?target:'tester';
+  if(active!=='macros')macroUI?.leave().catch(e=>message(e.message,true));
   for(const name of routes) $(name).hidden=name!==active;
   for(const link of document.querySelectorAll('.site-nav a')){if(link.hash===`#${active}`)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');}
   $(active==='tester'?'testConnection':'connectionHome').append($('connectionPanel'));
@@ -247,6 +252,7 @@ function refreshConfiguration(){
   const speed=Number($('curveSpeed').value);$('curveSpeedLabel').textContent=speed+' °/s';$('curveOutput').textContent=c.output===2?(fn(c,speed)*100).toFixed(1)+'% 满杆':fn(c,speed).toFixed(0)+' counts/s';
  }catch(e){$('curveOutput').textContent='请检查参数';}
 }
+macroUI=initMacroUI({transport:()=>transport,action,message,download});
 receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
 tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);},getStickConfig:()=>reportedProfiles[activeSlot]||defaults()});
 initReleases();

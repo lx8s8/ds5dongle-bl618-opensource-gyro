@@ -24,6 +24,8 @@ static uint8_t native_slot, dongle_slot, feedback, saved_record;
 static bool was_connected, factory_loaded, paused, was_calibrating, was_active, state_saved, state_dirty, manual_dirty;
 static volatile bool reset_requested;
 static uint32_t generation, saved_crc, manual_changed, last_packet;
+static uint32_t calibration_factory,calibration_device;
+static bool calibration_identity, calibration_skip_restore, calibration_factory_valid;
 static struct {
     bool down, armed, fired, tap;
     uint32_t since, tapped_at;
@@ -143,6 +145,7 @@ static bool save_bank(void)
 void gyro_runtime_init(void)
 {
     gyro_init(); diagnostics_init();
+    calibration_identity=calibration_skip_restore=calibration_factory_valid=false;
     last_cmd = last_result = last_sequence = edit_slot = 0;
     was_connected = factory_loaded = reset_requested = paused = was_calibrating = was_active = false;
     state_saved = manual_dirty = false; generation = saved_crc = last_packet = 0;
@@ -180,10 +183,28 @@ void gyro_runtime_init(void)
     state_dirty = !state_saved || current_crc() != saved_crc;
     activate(selected_slot()); feedback = 0; publish();
 }
+/* Manual bias persistence adapted from DongleRE's gcal.bin model. Match
+ * both the controller identity and factory calibration before restoring. */
+static bool save_calibration(bool clear)
+{
+    if(!calibration_identity)return false;
+    uint8_t record[28]={0};memcpy(record,clear?"GCL0":"GCL1",4);put32(record+4,calibration_factory);put32(record+8,calibration_device);
+    float bias[3]={0};if(!clear&&!gyro_get_calibration(bias))return false;
+    memcpy(record+12,bias,sizeof bias);put32(record+24,crc32(record,24));
+    return write_blob("gyro_cal_v1",record,sizeof record);
+}
+static void calibration_event(const uint8_t status[63])
+{
+    if(was_calibrating&&!(status[1]&4)&&(status[1]&(32|8))){
+        bool ok=!(status[1]&32)&&save_calibration(false);
+        notify(status[1]&32?4:3);
+        if(!(status[1]&32)&&!ok)LOG_WRN("[GYRO] Bias measured but could not be saved for this controller\n");
+    }
+}
 void gyro_runtime_poll(bool connected, uint32_t now_us)
 {
     if (reset_requested || (!connected && was_connected)) {
-        reset_requested = false; gyro_reset_stream(true); factory_loaded = false;
+        reset_requested = false; gyro_reset_stream(true); factory_loaded = false; calibration_identity=calibration_skip_restore=calibration_factory_valid=false;
         paused = was_calibrating = was_active = false; native_slot = 255;
         active_slot = 255; memset(keys, 0, sizeof(keys)); last_packet = 0;
     }
@@ -192,7 +213,22 @@ void gyro_runtime_poll(bool connected, uint32_t now_us)
         const uint8_t *data; uint16_t len;
         if (bt_hid_host_get_cached_feature(0x05, &data, &len)) {
             factory_loaded = true;
-            if (!gyro_set_factory_calibration(data, len)) LOG_WRN("[GYRO] Invalid factory calibration\n");
+            calibration_factory_valid=gyro_set_factory_calibration(data,len);
+            if (!calibration_factory_valid) LOG_WRN("[GYRO] Invalid factory calibration\n");
+            calibration_factory=crc32(data,len);
+        }
+    }
+    if(connected&&factory_loaded&&calibration_factory_valid&&!calibration_identity){
+        const uint8_t *id;uint16_t length;
+        if(bt_hid_host_get_cached_feature(0x09,&id,&length)&&length>=6){
+            calibration_device=crc32(id,6);calibration_identity=true;
+            if(calibration_skip_restore){save_calibration(true);}
+            uint8_t record[28];size_t n=0;
+            if(!calibration_skip_restore&&bt_settings_get_bin("gyro_cal_v1",record,sizeof record,&n)==0&&n==sizeof record&&
+               !memcmp(record,"GCL1",4)&&get32(record+4)==calibration_factory&&get32(record+8)==calibration_device&&
+               get32(record+24)==crc32(record,24)){
+                float bias[3];memcpy(bias,record+12,sizeof bias);gyro_restore_calibration(bias);
+            }
         }
     }
     if (manual_dirty && (int32_t)(now_us - manual_changed) >= 1000000) {
@@ -202,12 +238,12 @@ void gyro_runtime_poll(bool connected, uint32_t now_us)
     }
     gyro_idle(now_us);
     uint8_t status[63]; gyro_get_status(status);
-    if (was_calibrating && !(status[1] & 4) && (status[1] & (32 | 8)))
-        notify(status[1] & 32 ? 4 : 3);
+    calibration_event(status);
     was_calibrating = !!(status[1] & 4);
     publish();
 }
 void gyro_runtime_on_disconnect(void) { reset_requested = true; }
+uint8_t gyro_runtime_active_slot(void) { return active_slot; }
 uint32_t gyro_runtime_shortcut_mask(const uint8_t *raw, bool edge)
 {
     uint32_t pressed = gyro_buttons(raw, edge), suppress = 0;
@@ -274,8 +310,7 @@ void gyro_runtime_process(const uint8_t *raw, uint8_t *out, uint32_t now_us, boo
     gyro_set_modifiers(paused || active_slot == 255, fine);
     gyro_process(raw, out, now_us, edge); gyro_suppress_buttons(out, suppress);
     uint8_t status[63]; gyro_get_status(status);
-    if (was_calibrating && !(status[1] & 4) && (status[1] & (32 | 8)))
-        notify(status[1] & 32 ? 4 : 3);
+    calibration_event(status);
     if (!feedback && active_slot < SLOT_COUNT && bank[active_slot][2] == GYRO_TOGGLE && was_active != !!(status[1] & 2))
         notify(status[1] & 2 ? 2 : 1);
     was_calibrating = !!(status[1] & 4); was_active = !!(status[1] & 2);
@@ -301,7 +336,7 @@ void gyro_runtime_command(const uint8_t *p, uint16_t len)
         gyro_defaults(bank[edit_slot]);
         if (active_slot == edit_slot) gyro_set_config(bank[edit_slot], GYRO_CONFIG_SIZE);
         break;
-    case 5: gyro_clear_calibration(); break;
+    case 5: calibration_skip_restore=was_connected; gyro_clear_calibration(); if(calibration_identity&&!save_calibration(true))last_result=2; break;
     case 6:
         if (len < 3 || p[2] >= SLOT_COUNT) last_result = 1;
         else edit_slot = p[2];

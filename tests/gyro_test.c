@@ -14,7 +14,8 @@
 static uint8_t p[63], out[63], c[40], status[63];
 static uint32_t timestamp, host;
 static struct config_body app_config;
-static bool save_fails, endpoint_ready = true;
+static bool save_fails, endpoint_ready = true, calibration_cache;
+static uint8_t calibration_factory[40],calibration_id[6];
 static struct { char key[32]; uint8_t data[256]; size_t len; } storage[10];
 static int storage_count, flash_writes, config_writes;
 static void reset_storage(void) { memset(storage, 0, sizeof(storage)); storage_count = flash_writes = config_writes = 0; save_fails = false; }
@@ -417,8 +418,28 @@ int bt_settings_set_bin(const char *key, const uint8_t *data, size_t len)
 }
 int ef_get_env_blob(const char *key, void *data, size_t len, size_t *saved_len) { return bt_settings_get_bin(key, data, len, saved_len); }
 int ef_set_env_blob(const char *key, const void *data, size_t len) { return bt_settings_set_bin(key, data, len); }
-bool bt_hid_host_get_cached_feature(uint8_t id, const uint8_t **data, uint16_t *len) { return false; }
+bool bt_hid_host_get_cached_feature(uint8_t id, const uint8_t **data, uint16_t *len) {
+ if(!calibration_cache)return false;
+ if(id==5){*data=calibration_factory;*len=40;return true;}
+ if(id==9){*data=calibration_id;*len=6;return true;}
+ return false;
+}
 
+static uint32_t calibration_crc(const uint8_t *p,size_t n){uint32_t c=~0u;while(n--){c^=*p++;for(int i=0;i<8;i++)c=(c>>1)^(0xEDB88320u&(0u-(c&1)));}return ~c;}
+static void test_persisted_calibration(void)
+{
+ setup();reset_storage();memset(calibration_factory,0,40);
+ for(int i=0;i<3;i++){put16(calibration_factory+6+i*4,8640);put16(calibration_factory+8+i*4,-8640);}
+ put16(calibration_factory+18,540);put16(calibration_factory+20,540);memcpy(calibration_id,"abcdef",6);calibration_cache=true;
+ uint8_t record[28]={0};memcpy(record,"GCL1",4);put32(record+4,calibration_crc(calibration_factory,40));put32(record+8,calibration_crc(calibration_id,6));float bias[3]={0,1.25f,0};memcpy(record+12,bias,12);put32(record+24,calibration_crc(record,24));
+ assert(bt_settings_set_bin("gyro_cal_v1",record,28)==0);gyro_runtime_init();gyro_runtime_poll(true,1000);float actual[3];assert(gyro_get_calibration(actual)&&actual[1]==1.25f);
+ gyro_runtime_poll(false,2000);calibration_id[0]++;gyro_runtime_poll(true,3000);assert(!gyro_get_calibration(actual)); /* different controller */
+ gyro_runtime_poll(false,4000);calibration_id[0]--;calibration_factory[6]++;gyro_runtime_poll(true,5000);assert(!gyro_get_calibration(actual)); /* changed factory calibration */
+ gyro_runtime_poll(false,6000);calibration_factory[6]--;gyro_runtime_poll(true,7000);assert(gyro_get_calibration(actual));
+ uint8_t command[63]={5,99};gyro_runtime_command(command,63);assert(!gyro_get_calibration(actual));gyro_runtime_poll(false,8000);gyro_runtime_poll(true,9000);assert(!gyro_get_calibration(actual)); /* clear persists */
+ assert(gyro_restore_calibration(bias));float bad[3]={0,NAN,0};assert(!gyro_restore_calibration(bad));assert(gyro_get_calibration(actual)&&actual[1]==1.25f);bad[1]=21;assert(!gyro_restore_calibration(bad));
+ calibration_cache=false;
+}
 int main(void)
 {
     setbuf(stdout, NULL);
@@ -440,5 +461,6 @@ int main(void)
     puts("actions/debounce"); test_actions_and_slot_debounce();
     puts("control/metrics"); test_deferred_control_and_metrics();
     puts("calibration timeout/retry"); test_calibration_timeout_and_retry();
-    puts("gyro: 18 test groups passed"); return 0;
+    puts("persistent calibration"); test_persisted_calibration();
+    puts("gyro: 19 test groups passed"); return 0;
 }

@@ -34,7 +34,7 @@ int main(void) {
         assert(strcmp(desc_string_cb(0, 1), "Sony Interactive Entertainment") == 0);
         assert(strcmp(desc_string_cb(0, 2), edge ? "DualSense Edge Wireless Controller" : "DualSense Wireless Controller") == 0);
         unsigned length = config_desc[CONFIG_DESC_WDLEN_OFF] | config_desc[CONFIG_DESC_WDLEN_OFF + 1] << 8;
-        assert(length == (edge ? 477 : 361));
+        assert(length == (edge ? 487 : 371));
     }
     puts("Sony identity: 054C:0CE6 / 054C:0DF2, names and mode-specific HID lengths passed");
 }
