@@ -3,15 +3,34 @@ import hashlib
 import http.client
 import json
 import os
+import platform
 from pathlib import Path
 import socket
 import subprocess
 import sys
 import unittest
+import zipfile
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / 'build/control-center-native/release' / ('ds5-control-center.exe' if os.name == 'nt' else 'ds5-control-center')
+
+
+class NativeArchiveTests(unittest.TestCase):
+    def test_distributed_archive_contains_packaged_application(self):
+        folder = Path(os.environ.get('CONTROL_CENTER_PACKAGE_DIR', str(ROOT / 'dist/control-center')))
+        mac = sys.platform == 'darwin'
+        platform_name = 'macos' if mac else 'windows'
+        archive = folder / ('DS5-Control-Center-' + platform_name + '-' + platform.machine().lower() + '.zip')
+        base = 'DS5-Control-Center.app' if mac else 'DS5-Control-Center'
+        executable = base + ('/Contents/MacOS/DS5-Control-Center' if mac else '/DS5-Control-Center.exe')
+        resources = base + ('/Contents/Resources/' if mac else '/')
+        with zipfile.ZipFile(archive) as packed:
+            self.assertIsNone(packed.testzip())
+            self.assertEqual(packed.read(executable), (folder / executable).read_bytes())
+            self.assertGreater(packed.getinfo(executable).file_size, 1024)
+            for name in ['LICENSE', 'NOTICE', '使用说明.md', 'DUAL_FIRMWARE_CN.md', 'GYRO_AXIS_ANALYSIS_CN.md']:
+                self.assertGreater(packed.getinfo(resources + name).file_size, 0)
 
 
 class NativeLauncherTests(unittest.TestCase):

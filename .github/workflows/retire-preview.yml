@@ -1,0 +1,20 @@
+name: Retire broken preview
+on:
+  push:
+    paths: ['.github/workflows/retire-preview.yml']
+permissions:
+  contents: write
+jobs:
+  retire:
+    if: github.repository == 'lx8s8/ds5dongle-bl618-opensource-gyro' && github.ref == 'refs/heads/feature/control-center'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Withdraw the preview with the empty Windows archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          actual=$(gh release view v3.18-g2.4-rc3 --json targetCommitish --jq .targetCommitish)
+          test "$actual" = '9dd6f04bb3d7ce613cbae2268b6b7311981f2631'
+          gh release edit v3.18-g2.4-rc3 --draft=true

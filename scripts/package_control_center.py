@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,8 +34,8 @@ def freeze(output):
     env = {**os.environ, 'CARGO_TARGET_DIR': str(ROOT / 'build/control-center-native')}
     subprocess.run(['cargo', 'build', '--release', '--locked'], cwd=ROOT / 'desktop/native', env=env, check=True)
     binary = Path(env['CARGO_TARGET_DIR']) / 'release' / ('ds5-control-center.exe' if sys.platform == 'win32' else 'ds5-control-center')
-    name = 'DS5-Control-Center.app' if sys.platform == 'darwin' else 'DS5-Control-Center'
-    source = output / name
+    bundle_name = 'DS5-Control-Center.app' if sys.platform == 'darwin' else 'DS5-Control-Center'
+    source = output / bundle_name
     if source.exists():
         shutil.rmtree(source)
     source.mkdir()
@@ -57,8 +58,8 @@ def freeze(output):
     for n in ['LICENSE', 'NOTICE']:
         shutil.copy2(ROOT / n, license_dir / n)
     shutil.copy2(ROOT / 'docs/CONTROL_CENTER_CN.md', license_dir / '使用说明.md')
-    for name in ['DUAL_FIRMWARE_CN.md', 'GYRO_AXIS_ANALYSIS_CN.md']:
-        shutil.copy2(ROOT / 'docs' / name, license_dir / name)
+    for guide_name in ['DUAL_FIRMWARE_CN.md', 'GYRO_AXIS_ANALYSIS_CN.md']:
+        shutil.copy2(ROOT / 'docs' / guide_name, license_dir / guide_name)
     # Rust standard library is linked into the executable; include its licenses.
     for n in ['LICENSE-MIT', 'LICENSE-APACHE']:
         shutil.copy2(ROOT / 'desktop/native/licenses' / n, license_dir / ('RUST-' + n))
@@ -66,8 +67,19 @@ def freeze(output):
         subprocess.run(['codesign', '--force', '--sign', '-', '--timestamp=none', str(source)], check=True)
         archive = output / ('DS5-Control-Center-macos-' + platform.machine().lower() + '.zip')
         subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(source), str(archive)], check=True)
+        verify_archive(archive, bundle_name + '/Contents/MacOS/DS5-Control-Center')
         return str(archive)
-    return shutil.make_archive(str(output / ('DS5-Control-Center-windows-' + platform.machine().lower())), 'zip', output, name)
+    archive = shutil.make_archive(str(output / ('DS5-Control-Center-windows-' + platform.machine().lower())), 'zip', output, bundle_name)
+    verify_archive(archive, bundle_name + '/DS5-Control-Center.exe')
+    return archive
+
+
+def verify_archive(archive, executable):
+    with zipfile.ZipFile(archive) as packed:
+        if executable not in packed.namelist() or packed.getinfo(executable).file_size == 0:
+            raise ValueError('Application archive is missing its executable: ' + executable)
+        if packed.testzip() is not None:
+            raise ValueError('Application archive contains corrupt data')
 
 
 if __name__ == '__main__':

@@ -155,7 +155,7 @@ F6 命令 1 应用 config，2 保存，3 保存成功后复位。FB 命令 1 设
 
 这些记录只保存配置，不保存配对密钥、IMU 零偏或当前临时暂停/精瞄状态。
 
-## G2.4RC3：0xF3 宏接口
+## G2.4RC4：0xF3 宏接口
 
 独立于 0xFC，旧版固件没有这个 Feature。请求为 `command, sequence, slot, offset:u16, count:u8, data[57]`，共 63 字节。响应共 63 字节：`version=1, command, sequence, result, slot, playing_slot, flags, count, offset:u16, total:u16, data[51]`。结果 0 成功、1 无效、2 存储失败、3 忙碌／未连接；playing_slot 255 表示停止。每个请求都在 usb_task 执行，ISR 只复制已发布响应。
 
