@@ -22,7 +22,16 @@ fn collect(dir: &Path, root: &Path, entries: &mut Vec<String>) {
     }
 }
 fn main() {
-    let root = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../web").canonicalize().unwrap();
+    let manifest_dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).to_path_buf();
+    let version_file = manifest_dir.join("../VERSION");
+    println!("cargo:rerun-if-changed={}", version_file.display());
+    let version = fs::read_to_string(&version_file)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    println!("cargo:rustc-env=DS5_CC_VERSION={version}");
+    let root = manifest_dir.join("../../web").canonicalize().unwrap();
     println!("cargo:rerun-if-changed={}", root.display());
     let mut entries = Vec::new();
     collect(&root, &root, &mut entries);

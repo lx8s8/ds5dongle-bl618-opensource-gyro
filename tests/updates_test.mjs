@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { compareVersions, createLocalDownloader, findUpdate, parseDeviceVersion, parseReleaseTag, verifyDigest } from '../web/updates.mjs';
-import { bootManagerAssets, fetchVerifiedAsset, findLatestReleaseAsset, releaseAssets } from '../web/releases.mjs';
+import { compareVersions, createLocalDownloader, findUpdate, parseDeviceVersion, parseReleaseTag, probeLocalApp, verifyDigest } from '../web/updates.mjs';
+import { bootManagerAssets, controlCenterAssets, fetchVerifiedAsset, findAppUpdate, findLatestReleaseAsset, releaseAssets } from '../web/releases.mjs';
 
 assert.deepEqual(parseDeviceVersion('LCT616-DS5 3.18G2.4RC4'), { board: 'lctech616', usb: 'fs', g: [2, 4], rc: 4 });
 assert.deepEqual(parseDeviceVersion('LCT616-DS5 3.18G2.4RC4H\0\0'), { board: 'lctech616', usb: 'hs', g: [2, 4], rc: 4 });
@@ -102,4 +102,65 @@ await assert.rejects(
   /打开下载页/
 );
 assert.deepEqual(openedUrls, [ghAsset.browser_download_url]);
+
+// Control Center self-update probing and release selection tests
+const appCalls = [];
+const shaHex = '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
+const appInfo = await probeLocalApp(async (url, init) => {
+  appCalls.push([url, init]);
+  if (url === '/api/local') {
+    return {
+      ok: true,
+      json: async () => ({
+        application: 'DS5 Control Center', token: 'app-tok', version: 'v3.18-g2.4-rc8',
+        mode: 'native', asset: 'DS5-Control-Center-macos-arm64.zip', canSelfUpdate: true, updateNote: '',
+      }),
+    };
+  }
+  return { ok: true, status: 200, json: async () => ({ updated: true, restarting: true }) };
+});
+assert.equal(appInfo.version, 'v3.18-g2.4-rc8');
+assert.equal(appInfo.asset, 'DS5-Control-Center-macos-arm64.zip');
+assert.equal(appInfo.canSelfUpdate, true);
+const updateResp = await appInfo.selfUpdate({
+  repo: 'lx8s8/ds5dongle-bl618-opensource-gyro', tag: 'v3.18-g2.4-rc9',
+  name: 'DS5-Control-Center-macos-arm64.zip', sha256: shaHex,
+});
+assert.deepEqual(updateResp, { updated: true, restarting: true });
+assert.equal(appCalls[1][0], `/api/self-update?repo=lx8s8%2Fds5dongle-bl618-opensource-gyro&tag=v3.18-g2.4-rc9&name=DS5-Control-Center-macos-arm64.zip&sha256=${shaHex}`);
+assert.equal(appCalls[1][1].method, 'POST');
+assert.equal(appCalls[1][1].headers['X-Session-Token'], 'app-tok');
+
+const badAppInfo = await probeLocalApp(async url => (
+  url === '/api/local'
+    ? { ok: true, json: async () => ({ application: 'DS5 Control Center', token: 't' }) }
+    : { ok: false, status: 400, text: async () => '目录不可写' }
+));
+await assert.rejects(badAppInfo.selfUpdate({ repo: 'a/b', tag: 'v1', name: 'x.zip', sha256: shaHex }), /目录不可写/);
+
+const ghGyroUrl = (tag, name) => `https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/${tag}/${name}`;
+const appReleases = [
+  {
+    tag_name: 'v3.18-g2.4-rc9', prerelease: true,
+    assets: [
+      { name: 'DS5-Control-Center-windows-amd64.zip', size: 20, browser_download_url: ghGyroUrl('v3.18-g2.4-rc9', 'DS5-Control-Center-windows-amd64.zip') },
+      { name: 'DS5-Control-Center-macos-arm64.zip', size: 30, digest, browser_download_url: ghGyroUrl('v3.18-g2.4-rc9', 'DS5-Control-Center-macos-arm64.zip') },
+    ],
+  },
+  {
+    tag_name: 'v3.18-g2.4-rc8', prerelease: false,
+    assets: [{ name: 'DS5-Control-Center-macos-arm64.zip', size: 25, digest, browser_download_url: ghGyroUrl('v3.18-g2.4-rc8', 'DS5-Control-Center-macos-arm64.zip') }],
+  },
+  {
+    tag_name: 'v3.18-g2.4', prerelease: false,
+    assets: [{ name: 'DS5-Control-Center-macos-arm64.zip', size: 25, digest, browser_download_url: 'https://evil.example/fake.zip' }],
+  },
+];
+assert.deepEqual(controlCenterAssets(appReleases[0], 'DS5-Control-Center-macos-arm64.zip').map(a => a.name), ['DS5-Control-Center-macos-arm64.zip']);
+const nextApp = findAppUpdate(appReleases, { version: 'v3.18-g2.4-rc8', asset: 'DS5-Control-Center-macos-arm64.zip' }, { includePrerelease: true });
+assert.equal(nextApp.release.tag_name, 'v3.18-g2.4-rc9');
+assert.equal(nextApp.newer, true);
+assert.equal(findAppUpdate(appReleases, { version: 'v3.18-g2.4-rc8', asset: 'DS5-Control-Center-macos-arm64.zip' }, { includePrerelease: false }).newer, false);
+assert.equal(findAppUpdate(appReleases, { version: 'dev', asset: 'DS5-Control-Center-macos-arm64.zip' }), null);
+
 console.log('updates: version parsing, ordering, release selection, digest check and local downloader passed');

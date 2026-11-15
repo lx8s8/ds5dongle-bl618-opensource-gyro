@@ -13,6 +13,7 @@ use std::{
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 const MAX_HEADERS: usize = 16384;
 const MAX_DOWNLOAD: usize = 8 * 1024 * 1024;
+const APP_VERSION: &str = env!("DS5_CC_VERSION");
 const REPOSITORIES: [&str; 2] = ["lx8s8/ds5dongle-bl618-opensource-gyro", "sqlCRT/ds5dongle-bl618-opensource"];
 struct Server {
     downloading: AtomicBool,
@@ -21,6 +22,78 @@ struct Server {
     token: String,
     stopping: AtomicBool,
     connections: AtomicUsize,
+}
+
+const fn self_asset_name() -> Option<&'static str> {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    { Some("DS5-Control-Center-windows-amd64.zip") }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    { Some("DS5-Control-Center-macos-arm64.zip") }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    { Some("DS5-Control-Center-macos-x86_64.zip") }
+    #[cfg(not(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+    )))]
+    { None }
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    let mut padded = Vec::with_capacity((data.len() + 9).div_ceil(64) * 64);
+    padded.extend_from_slice(data);
+    padded.push(0x80);
+    while (padded.len() + 8) % 64 != 0 { padded.push(0); }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+    for block in padded.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 { w[i] = u32::from_be_bytes([block[i * 4], block[i * 4 + 1], block[i * 4 + 2], block[i * 4 + 3]]); }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+            hh = g; g = f; f = e; e = d.wrapping_add(temp1); d = c; c = b; b = a; a = temp1.wrapping_add(temp2);
+        }
+        for (slot, delta) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) { *slot = slot.wrapping_add(delta); }
+    }
+    h.iter().map(|v| format!("{v:08x}")).collect()
 }
 
 fn random_token() -> io::Result<String> {
@@ -84,6 +157,194 @@ fn release_url(query: &str) -> Option<String> {
     let name = query_value(query, "name")?;
     if !REPOSITORIES.contains(&repo.as_str()) || !safe_component(&tag) || !safe_component(&name) || !allowed_asset(&name) { return None; }
     Some(format!("https://github.com/{repo}/releases/download/{tag}/{name}"))
+}
+
+fn self_update_request(query: &str) -> Option<(String, String)> {
+    let asset = self_asset_name()?;
+    let repo = query_value(query, "repo")?;
+    let tag = query_value(query, "tag")?;
+    let name = query_value(query, "name")?;
+    let sha = query_value(query, "sha256")?;
+    if repo != REPOSITORIES[0] || !safe_component(&tag) || name != asset || sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((format!("https://github.com/{repo}/releases/download/{tag}/{name}"), sha.to_ascii_lowercase()))
+}
+
+fn dir_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".ds5-write-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(file) => { drop(file); let _ = std::fs::remove_file(&probe); true }
+        Err(_) => false,
+    }
+}
+
+fn install_target() -> Result<PathBuf, &'static str> {
+    if self_asset_name().is_none() { return Err("当前平台暂不支持客户端自动更新"); }
+    let exe = std::env::current_exe().map_err(|_| "无法定位当前程序路径")?;
+    #[cfg(target_os = "macos")]
+    {
+        if exe.file_name().and_then(|n| n.to_str()) != Some("DS5-Control-Center") {
+            return Err("当前直接运行未打包二进制，请使用 DS5-Control-Center.app 启用自升级");
+        }
+        let macos = exe.parent().ok_or("应用包结构不完整")?;
+        let contents = macos.parent().ok_or("应用包结构不完整")?;
+        let app = contents.parent().ok_or("应用包结构不完整")?;
+        if macos.file_name().and_then(|n| n.to_str()) != Some("MacOS")
+            || contents.file_name().and_then(|n| n.to_str()) != Some("Contents")
+            || app.extension().and_then(|e| e.to_str()) != Some("app") {
+            return Err("当前不是标准 macOS .app 应用包，请手动下载替换");
+        }
+        if app.to_string_lossy().contains("/AppTranslocation/") {
+            return Err("当前应用位于系统安全隔离路径，请先拖入“应用程序”或本地文件夹后再升级");
+        }
+        let parent = app.parent().ok_or("无法定位应用所在目录")?;
+        if !dir_writable(parent) {
+            return Err("当前应用所在目录无写入权限（如在只读镜像内），请先移至本地可写目录");
+        }
+        return Ok(app.to_path_buf());
+    }
+    #[cfg(windows)]
+    {
+        if !exe.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("DS5-Control-Center.exe")) {
+            return Err("当前非打包版 DS5-Control-Center.exe，请手动下载替换");
+        }
+        let dir = exe.parent().ok_or("无法定位安装目录")?;
+        if !dir_writable(dir) {
+            return Err("当前目录无写入权限（如 Program Files），请移至用户目录或以管理员身份运行");
+        }
+        return Ok(dir.to_path_buf());
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    Err("当前平台暂不支持客户端自动更新")
+}
+
+struct TempStage {
+    path: PathBuf,
+    keep: bool,
+}
+
+impl TempStage {
+    fn new(parent: &Path) -> io::Result<Self> {
+        let path = parent.join(format!(".ds5-cc-update-{}", std::process::id()));
+        if path.exists() { let _ = std::fs::remove_dir_all(&path); }
+        std::fs::create_dir_all(&path)?;
+        Ok(Self { path, keep: false })
+    }
+}
+
+impl Drop for TempStage {
+    fn drop(&mut self) {
+        if !self.keep { let _ = std::fs::remove_dir_all(&self.path); }
+    }
+}
+
+fn is_regular_nonempty(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink() && m.len() > 0)
+}
+
+fn perform_self_update(zip_bytes: &[u8], expected_sha: &str, target: &Path, port: &str) -> Result<(), &'static str> {
+    if !zip_bytes.starts_with(b"PK\x03\x04") || !token_matches(&sha256_hex(zip_bytes), expected_sha) {
+        return Err("控制中心安装包 SHA256 校验失败或压缩包损坏");
+    }
+    #[cfg(target_os = "macos")]
+    let stage_parent = target.parent().ok_or("无法创建临时更新目录")?;
+    #[cfg(windows)]
+    let stage_parent = target;
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut stage = TempStage::new(stage_parent).map_err(|_| "无法创建临时更新目录")?;
+    let zip_path = stage.path.join("package.zip");
+    let unpack = stage.path.join("unpack");
+    std::fs::create_dir_all(&unpack).map_err(|_| "无法创建解压目录")?;
+    std::fs::write(&zip_path, zip_bytes).map_err(|_| "写入临时安装包失败")?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("/usr/bin/ditto")
+            .args(["-x", "-k"])
+            .arg(&zip_path)
+            .arg(&unpack)
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .status()
+            .map_err(|_| "解压安装包失败")?;
+        if !status.success() { return Err("安装包解压失败"); }
+        let new_app = unpack.join("DS5-Control-Center.app");
+        if !is_regular_nonempty(&new_app.join("Contents/MacOS/DS5-Control-Center")) {
+            return Err("安装包缺少完整的 macOS 应用结构");
+        }
+        let backup = stage.path.join("backup.app");
+        std::fs::rename(target, &backup).map_err(|_| "无法替换当前应用目录")?;
+        if std::fs::rename(&new_app, target).is_err() {
+            let _ = std::fs::rename(&backup, target);
+            return Err("写入新版应用失败，已回滚原版本");
+        }
+        let target_arg = target.to_path_buf();
+        let port_arg = port.to_string();
+        let script = r#"sleep 0.6; if [ "$2" = "8765" ]; then open -n "$1" >/dev/null 2>&1 || "$1/Contents/MacOS/DS5-Control-Center" >/dev/null 2>&1; else open -n "$1" --args --port "$2" >/dev/null 2>&1 || "$1/Contents/MacOS/DS5-Control-Center" --port "$2" >/dev/null 2>&1; fi"#;
+        let _ = Command::new("/bin/sh")
+            .args(["-c", script, "_", target_arg.to_str().unwrap_or(""), &port_arg])
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn();
+        let _ = stage;
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let ps = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        let expand = Command::new(&ps)
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
+                "Expand-Archive -LiteralPath $env:DS5_ZIP -DestinationPath $env:DS5_UNPACK -Force"])
+            .env("DS5_ZIP", &zip_path)
+            .env("DS5_UNPACK", &unpack)
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .status()
+            .map_err(|_| "解压安装包失败")?;
+        if !expand.success() { return Err("安装包解压失败"); }
+        let src = unpack.join("DS5-Control-Center");
+        let staged_exe = src.join("DS5-Control-Center.exe");
+        if !is_regular_nonempty(&staged_exe) {
+            return Err("安装包缺少 DS5-Control-Center.exe");
+        }
+        let dst_exe = target.join("DS5-Control-Center.exe");
+        let updater = r#"
+            $ErrorActionPreference = 'SilentlyContinue'
+            Wait-Process -Id ([int]$env:DS5_PID) -Timeout 15
+            Start-Sleep -Milliseconds 350
+            Get-ChildItem -LiteralPath $env:DS5_SRC -Force | ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination $env:DS5_DST -Recurse -Force
+            }
+            Remove-Item -LiteralPath $env:DS5_STAGE -Recurse -Force
+            if ($env:DS5_PORT -and $env:DS5_PORT -ne '8765') {
+                Start-Process -FilePath $env:DS5_EXE -ArgumentList @('--port', $env:DS5_PORT)
+            } else {
+                Start-Process -FilePath $env:DS5_EXE
+            }
+        "#;
+        Command::new(&ps)
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", updater])
+            .env("DS5_PID", std::process::id().to_string())
+            .env("DS5_STAGE", &stage.path)
+            .env("DS5_SRC", &src)
+            .env("DS5_DST", target)
+            .env("DS5_EXE", &dst_exe)
+            .env("DS5_PORT", port)
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .creation_flags(0x0800_0200)
+            .spawn()
+            .map_err(|_| "无法启动更新替换进程")?;
+        stage.keep = true;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (port, &stage);
+        Err("当前平台暂不支持客户端自动更新")
+    }
 }
 
 fn curl_path() -> PathBuf {
@@ -357,9 +618,51 @@ fn serve(mut stream: TcpStream, server: &Server) -> io::Result<()> {
             Err(message) => reply(&mut stream, 502, "text/plain", message.as_bytes(), false),
         };
     }
+    if method == "POST" && path == "/api/self-update" {
+        if origin != Some(server.origin.as_str()) || !token_matches(token.unwrap_or(""), &server.token) {
+            return reply(&mut stream, 403, "text/plain", b"Invalid session", false);
+        }
+        let Some((url, expected_sha)) = self_update_request(query) else {
+            return reply(&mut stream, 400, "text/plain", b"Unsupported self-update request", false);
+        };
+        let target = match install_target() {
+            Ok(p) => p,
+            Err(note) => return reply(&mut stream, 400, "text/plain", note.as_bytes(), false),
+        };
+        if server.downloading.swap(true, Ordering::AcqRel) {
+            return reply(&mut stream, 503, "text/plain", b"A download is already running", false);
+        }
+        let dl = download_release(&url);
+        let outcome = match dl {
+            Ok(bytes) => {
+                let port = server.host.rsplit(':').next().unwrap_or("8765");
+                perform_self_update(&bytes, &expected_sha, &target, port)
+                    .map_err(|msg| (400u16, msg))
+            }
+            Err(message) => Err((502u16, message)),
+        };
+        server.downloading.store(false, Ordering::Release);
+        stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+        return match outcome {
+            Ok(()) => {
+                let res = reply(&mut stream, 200, "application/json", br#"{"updated":true,"restarting":true}"#, false);
+                server.stopping.store(true, Ordering::Release);
+                res
+            }
+            Err((code, msg)) => reply(&mut stream, code, "text/plain", msg.as_bytes(), false),
+        };
+    }
     if method != "GET" && !head { return reply(&mut stream, 405, "text/plain", b"Method not allowed", false); }
     if path == "/api/local" {
-        let data = format!(r#"{{"application":"DS5 Control Center","token":"{}"}}"#, server.token);
+        let asset = self_asset_name().unwrap_or("");
+        let (can_update, note) = match install_target() {
+            Ok(_) => (true, ""),
+            Err(reason) => (false, reason),
+        };
+        let data = format!(
+            r#"{{"application":"DS5 Control Center","token":"{}","version":"{}","mode":"native","asset":"{}","canSelfUpdate":{},"updateNote":"{}"}}"#,
+            server.token, json_escape(APP_VERSION), json_escape(asset), can_update, json_escape(note)
+        );
         return reply(&mut stream, 200, "application/json", data.as_bytes(), head);
     }
     let path = if path == "/" { "/index.html" } else { path };
@@ -430,4 +733,27 @@ fn run() -> io::Result<()> {
 }
 fn main() {
     if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sha256_matches_nist_vectors() {
+        assert_eq!(sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(sha256_hex(b"hello"), "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    }
+
+    #[test]
+    fn self_update_query_rejects_foreign_repo_and_bad_sha() {
+        let Some(asset) = self_asset_name() else { return; };
+        let good_sha = "a".repeat(64);
+        let q = format!("repo=lx8s8%2Fds5dongle-bl618-opensource-gyro&tag=v3.18-g2.4-rc8&name={asset}&sha256={good_sha}");
+        assert!(self_update_request(&q).is_some());
+        assert!(self_update_request(&format!("repo=evil%2Frepo&tag=v1&name={asset}&sha256={good_sha}")).is_none());
+        assert!(self_update_request("repo=lx8s8%2Fds5dongle-bl618-opensource-gyro&tag=v1&name=other.zip&sha256=aaaa").is_none());
+        assert!(self_update_request(&format!("repo=lx8s8%2Fds5dongle-bl618-opensource-gyro&tag=v1&name={asset}&sha256=short")).is_none());
+    }
 }

@@ -92,6 +92,10 @@ class NativeLauncherTests(unittest.TestCase):
         self.assertEqual(status, 200)
         info = json.loads(data)
         self.assertEqual(info['application'], 'DS5 Control Center')
+        self.assertEqual(info['version'], (ROOT / 'desktop/VERSION').read_text(encoding='utf-8').strip())
+        self.assertEqual(info['mode'], 'native')
+        self.assertTrue(info['asset'].startswith('DS5-Control-Center-') and info['asset'].endswith('.zip'))
+        self.assertFalse(info['canSelfUpdate'])  # loose binary outside .app / writable install dir
         self.assertEqual(len(bytes.fromhex(info['token'])), 32)
         self.assertEqual(self.request('/api/quit', 'POST')[0], 403)
         self.assertEqual(self.request('/api/quit', 'POST', {'Origin': self.origin, 'X-Session-Token': 'wrong'})[0], 403)
@@ -111,6 +115,19 @@ class NativeLauncherTests(unittest.TestCase):
         mgr = '/api/download?repo=' + repo + '&tag=v3.18-g2.4-rc6&name=ds5-boot-manager-lctech616-fs-experimental.bin'
         self.assertEqual(self.request(mgr, 'POST')[0], 403)
         self.assertEqual(self.request(good)[0], 404)
+        asset = json.loads(self.request('/api/local')[2])['asset']
+        sha = 'a' * 64
+        self_up = f'/api/self-update?repo={repo}&tag=v3.18-g2.4-rc9&name={asset}&sha256={sha}'
+        self.assertEqual(self.request(self_up, 'POST')[0], 403)
+        for bad in [
+            f'repo=sqlCRT%2Fds5dongle-bl618-opensource&tag=v1&name={asset}&sha256={sha}',
+            f'repo={repo}&tag=v1&name=other.zip&sha256={sha}',
+            f'repo={repo}&tag=v1&name={asset}&sha256=badhex',
+        ]:
+            self.assertEqual(self.request('/api/self-update?' + bad, 'POST', auth)[0], 400, bad)
+        # Valid params on loose test binary are rejected with 400 because binary is not inside an installable bundle/dir
+        self.assertEqual(self.request(self_up, 'POST', auth)[0], 400)
+        self.assertEqual(self.request(self_up)[0], 404)
 
     def test_rejects_duplicate_host_and_large_headers(self):
         for raw, status in [

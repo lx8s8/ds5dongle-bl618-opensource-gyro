@@ -54,18 +54,33 @@ export async function verifyDigest(bytes, digest) {
   return true;
 }
 
-// The packaged local tool fetches release ZIPs for the page (GitHub assets have no CORS).
-export async function createLocalDownloader(fetcher = fetch) {
+// The packaged local tool fetches release assets and handles self-updates (GitHub assets have no CORS).
+export async function probeLocalApp(fetcher = globalThis.fetch) {
   try {
     const response = await fetcher('/api/local');
     if (!response.ok) return null;
     const info = await response.json();
     if (info.application !== 'DS5 Control Center') return null;
-    return async ({ repo, tag, name }) => {
+    const download = async ({ repo, tag, name }) => {
       const query = new URLSearchParams({ repo, tag, name });
       const r = await fetcher('/api/download?' + query, { method: 'POST', headers: { 'X-Session-Token': info.token } });
       if (!r.ok) throw new Error(r.status === 502 ? '本地工具下载失败，请检查网络' : '本地工具拒绝下载（HTTP ' + r.status + '）');
       return new Uint8Array(await r.arrayBuffer());
     };
+    const selfUpdate = async ({ repo, tag, name, sha256 }) => {
+      const query = new URLSearchParams({ repo, tag, name, sha256 });
+      const r = await fetcher('/api/self-update?' + query, { method: 'POST', headers: { 'X-Session-Token': info.token } });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(r.status === 502 ? '下载新版控制中心失败，请检查网络' : (text || '控制中心升级失败（HTTP ' + r.status + '）'));
+      }
+      return await r.json().catch(() => ({ updated: true, restarting: true }));
+    };
+    return { ...info, download, selfUpdate };
   } catch { return null; }
+}
+
+export async function createLocalDownloader(fetcher = globalThis.fetch) {
+  const app = await probeLocalApp(fetcher);
+  return app ? app.download : null;
 }

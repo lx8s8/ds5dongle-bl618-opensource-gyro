@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DS5 控制中心 · BL616 / BL618</title>
-<link rel="stylesheet" href="style.css?v=20261115-rk6">
+<link rel="stylesheet" href="style.css?v=20261115-rc8">
 </head>
 <body>
 <header class="site-header">
@@ -229,7 +229,7 @@
 <div class="settings-card"><div class="subhead"><h3>触发绑定</h3><div class="actions"><button id="macroRulesRead" class="requires-macro">读取绑定</button><button id="macroRulesSave" class="primary requires-macro">保存绑定</button></div></div><p class="hint">所选按键全部按住才成立。支持 Fn、背键和组合键；同一时刻播放一个宏。宏随接收器运行，不需要控制中心常驻。</p><div class="actions filter-bar" id="macroRuleFilterBar"><span class="hint" id="macroRulesSummary">已启用 0 / 16 条绑定</span><label class="inline-toggle"><input type="checkbox" id="macroShowActiveOnly"> 仅显示已启用绑定</label></div><div id="macroBindings"></div></div>
 </section>
 
-  <section id="update" class="panel" hidden><div class="page-heading"><div><span class="page-kicker">05 / WEBFLASHER</span><h2>固件与更新</h2><p class="page-sub">在线检测最新版本并一键准备刷写，无需安装驱动即可通过浏览器完成更新。</p></div><span class="tag">当前：<b id="firmware">未连接</b></span></div><div id="updateBanner" class="settings-card" hidden><h3 id="updateTitle"></h3><p id="updateDetail" class="hint"></p><div class="actions"><button id="updateGet" class="primary" type="button" hidden>下载并准备刷写</button></div><p id="updateStatus" class="notice" role="status" aria-live="polite"></p></div><div class="settings-card"><div class="grid"><label class="field">固件来源<select id="releaseSource"><option value="gyro">本项目 · 体感映射固件</option><option value="upstream">上游 · 原版固件</option></select></label><label class="field">开发板<select id="releaseBoard"><option value="lctech616">LCTech BL616 / 当前信海板</option><option value="aim61">Ai-M61 BL618</option><option value="m0sdock">Sipeed M0S Dock</option></select></label><label class="field">USB 速度<select id="releaseUSB"><option value="fs">FS · 兼容模式</option><option value="hs">HS · 高速模式</option></select></label></div><div class="actions"><button id="releaseRefresh" class="primary">检查更新</button><label><input id="includePrerelease" type="checkbox" checked> 包含测试版 / 预发布</label><span id="releaseStatus" class="hint">进入此页时自动检查</span></div><p id="upstreamNotice" class="notice warning" hidden>上游原版固件不包含本项目新增的体感功能。v3.24 发布包与其公开源码版本不同；包内 USB 速度以发布说明为准，不能仅凭文件名判断。</p></div><div id="releaseList" class="release-list"></div><div class="settings-card flash-steps-card"><h3>刷写指南 · 3 步完成</h3>
+  <section id="update" class="panel" hidden><div class="page-heading"><div><span class="page-kicker">05 / WEBFLASHER</span><h2>固件与更新</h2><p class="page-sub">在线检测最新版本并一键准备刷写，无需安装驱动即可通过浏览器完成更新。</p></div><span class="tag">当前：<b id="firmware">未连接</b></span></div><div id="appUpdateCard" class="settings-card"><div class="subhead"><h3>DS5 控制中心客户端</h3><span id="appVersionTag" class="tag">检测中</span></div><p id="appUpdateDetail" class="hint">进入此页或点击检查更新时自动比对 GitHub 新版本。</p><div class="actions"><button id="appUpdateRun" class="primary" type="button" hidden disabled>一键升级并重启</button><a id="appUpdateManual" class="file-button" href="https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases" target="_blank" rel="noopener" hidden>手动下载新版 ↗</a></div><p id="appUpdateStatus" class="notice" role="status" aria-live="polite" hidden></p></div><div id="updateBanner" class="settings-card" hidden><h3 id="updateTitle"></h3><p id="updateDetail" class="hint"></p><div class="actions"><button id="updateGet" class="primary" type="button" hidden>下载并准备刷写</button></div><p id="updateStatus" class="notice" role="status" aria-live="polite"></p></div><div class="settings-card"><div class="grid"><label class="field">固件来源<select id="releaseSource"><option value="gyro">本项目 · 体感映射固件</option><option value="upstream">上游 · 原版固件</option></select></label><label class="field">开发板<select id="releaseBoard"><option value="lctech616">LCTech BL616 / 当前信海板</option><option value="aim61">Ai-M61 BL618</option><option value="m0sdock">Sipeed M0S Dock</option></select></label><label class="field">USB 速度<select id="releaseUSB"><option value="fs">FS · 兼容模式</option><option value="hs">HS · 高速模式</option></select></label></div><div class="actions"><button id="releaseRefresh" class="primary">检查更新</button><label><input id="includePrerelease" type="checkbox" checked> 包含测试版 / 预发布</label><span id="releaseStatus" class="hint">进入此页时自动检查</span></div><p id="upstreamNotice" class="notice warning" hidden>上游原版固件不包含本项目新增的体感功能。v3.24 发布包与其公开源码版本不同；包内 USB 速度以发布说明为准，不能仅凭文件名判断。</p></div><div id="releaseList" class="release-list"></div><div class="settings-card flash-steps-card"><h3>刷写指南 · 3 步完成</h3>
 <ol class="web-steps"><li><div><strong>下载并选中固件包</strong><p>在上方版本列表一键下载匹配板型与 USB 速度的固件 ZIP，无需手动解压。</p></div></li><li><div><strong>核对板型与写入模式</strong><p>加载包后核对目标板型与模式并勾选确认；常规升级选“仅主固件”可保留设置。</p></div></li><li><div><strong>按住 BOOT 插入 USB 刷写</strong><p>按住接收器上的 <kbd>BOOT 键</kbd> 插入电脑 USB 后松开，点击 <kbd>开始刷写</kbd> 并选择串口；完成后会 <kbd>自动重启</kbd>。</p></div></li></ol></div><div class="settings-card" id="webFlash"><h3>接收器与固件 · 网页刷写</h3>
 <p id="flashSupport" class="notice error" hidden>当前浏览器不支持 Web Serial。请使用桌面版 Chrome 或 Edge。</p>
 <div class="grid"><label class="field">固件包 ZIP<input id="flashPackage" type="file" accept=".zip,application/zip"></label><label class="field">写入内容<select id="flashMode"><option value="full">完整：Boot2 + 分区表 + 主固件（首次安装 / 恢复）</option><option value="app">仅主固件（已是同布局固件时更新）</option></select></label><label id="flashVariantField" class="field" hidden>包内 USB 变体<select id="flashVariant"></select></label></div>
@@ -257,7 +257,7 @@
   <label class="field">自动下载 USB（首选 FS / HS）<select id="dualSlotUsb"><option value="fs">FS · 全速兼容（推荐）</option><option value="hs">HS · 高速模式</option></select></label>
   <label class="field">固件包 ZIP 或 .bin<input id="dualSlotFile" type="file" accept=".zip,.bin,application/zip,application/octet-stream"></label>
   <label id="dualSlotVariantField" class="field" hidden>包内 USB 变体<select id="dualSlotVariant"></select></label>
-  <label class="field">写入记录的版本号（≤19 字符）<input id="dualSlotVersion" type="text" maxlength="19" placeholder="例如 3.18G2.4RC7 / 3.24H"></label>
+  <label class="field">写入记录的版本号（≤19 字符）<input id="dualSlotVersion" type="text" maxlength="19" placeholder="例如 3.18G2.4RC8 / 3.24H"></label>
   <pre id="dualSlotSummary" class="mono hint"></pre>
   <div class="actions"><button id="dualAutoSlot" type="button">自动下载匹配固件</button><button id="dualSlotRun" class="primary" type="button" disabled>更新该槽位</button></div>
 </div>
@@ -273,7 +273,7 @@
     <label class="field">启动管理器 .bin（experimental）<input id="dualMgrFile" type="file" accept=".bin,application/octet-stream"></label>
     <label class="field">体感固件（ZIP 或 .bin）<input id="dualGyroFile" type="file" accept=".zip,.bin,application/zip,application/octet-stream"></label>
     <label id="dualGyroVariantField" class="field" hidden>体感包 USB 变体<select id="dualGyroVariant"></select></label>
-    <label class="field">体感槽位版本号<input id="dualGyroVer" type="text" maxlength="19" placeholder="例如 3.18G2.4RC7"></label>
+    <label class="field">体感槽位版本号<input id="dualGyroVer" type="text" maxlength="19" placeholder="例如 3.18G2.4RC8"></label>
     <label class="field">上游原版固件（ZIP 或 .bin）<input id="dualUpFile" type="file" accept=".zip,.bin,application/zip,application/octet-stream"></label>
     <label id="dualUpVariantField" class="field" hidden>上游包 USB 变体<select id="dualUpVariant"></select></label>
     <label class="field">上游槽位版本号<input id="dualUpVer" type="text" maxlength="19" placeholder="例如 3.24"></label>
@@ -305,6 +305,6 @@
 </section>
 <footer></footer>
 </main>
-<script type="module" src="app.js?v=20261115-rk6"></script>
+<script type="module" src="app.js?v=20261115-rc8"></script>
 </body>
 </html>

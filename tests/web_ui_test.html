@@ -124,6 +124,17 @@ try {
   for(const tab of tabButtons){tab.click();check(tab.getAttribute('aria-selected')==='true'&&tabPanes.filter(p=>!p.hidden).length===1,'test tab selects one panel');}
   check(location.hash===hash,'test tabs do not navigate or scroll to anchors');
   check(Math.abs($('controllerVisual').getBoundingClientRect().y-model.y)<1&&Math.abs($('connectionPanel').getBoundingClientRect().y-connection.y)<1&&Math.abs(document.querySelector('.test-panes').getBoundingClientRect().height-panelHeight)<1,'model, connection and panel height stay fixed across tabs');
+  let centeredKeys = 0;
+  for (const g of document.querySelectorAll('#controllerVisual .pad-key')) {
+    const shape = g.querySelector('rect, circle'), txt = g.querySelector('text');
+    if (!shape || !txt) continue;
+    centeredKeys++;
+    const sb = shape.getBBox(), tb = txt.getBBox();
+    const dx = Math.abs((sb.x + sb.width / 2) - (tb.x + tb.width / 2));
+    const dy = Math.abs((sb.y + sb.height / 2) - (tb.y + tb.height / 2));
+    check(dx <= 2 && dy <= 2.5, `controller SVG label centered (${txt.textContent}: dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)})`);
+  }
+  check(centeredKeys >= 12, 'verified SVG button label centering on controller overview');
   $('test-tab-other').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}));
   check($('test-tab-input').getAttribute('aria-selected')==='true'&&document.activeElement===$('test-tab-input'),'tab keyboard navigation and focus');
   $('test-tab-rumble').click();$('rumbleIntensity').value='25';$('rumbleBoth').click();await waitFor(()=>outputs.some(p=>p[2]>0&&p[3]>0));
@@ -236,8 +247,14 @@ try {
     'ds5dongle-lctech616-fs-test.zip': gyroZip,
     'ds5dongle-bl618-lctech616-v3.24.zip': upZip,
   };
+  const ccPkgSha = await shaTag(new Uint8Array([0x50, 0x4b, 3, 4]));
   const ghReleaseStubs = {
     'lx8s8/ds5dongle-bl618-opensource-gyro': [{
+      tag_name: 'v3.18-g2.4-rc9', prerelease: true, published_at: '2026-11-15T13:00:00Z',
+      assets: [
+        { name: 'DS5-Control-Center-macos-arm64.zip', size: 123456, digest: ccPkgSha, browser_download_url: 'https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc9/DS5-Control-Center-macos-arm64.zip' },
+      ],
+    }, {
       tag_name: 'v3.18-g2.4-rc7', prerelease: true, published_at: '2026-11-15T12:00:00Z',
       assets: [
         { name: 'ds5-boot-manager-lctech616-fs-experimental.bin', size: mgrBin.length, digest: await shaTag(mgrBin), browser_download_url: 'https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc7/ds5-boot-manager-lctech616-fs-experimental.bin' },
@@ -251,10 +268,16 @@ try {
       ],
     }],
   };
+  let selfUpdateArgs = null;
   const origFetch = window.fetch;
   window.fetch = async (url, init) => {
     const s = String(url);
-    if (s === '/api/local') return new Response(JSON.stringify({ application: 'DS5 Control Center', token: 'mocktok' }), { status: 200 });
+    if (s === '/api/local') return new Response(JSON.stringify({ application: 'DS5 Control Center', token: 'mocktok', version: 'v3.18-g2.4-rc8', mode: 'native', asset: 'DS5-Control-Center-macos-arm64.zip', canSelfUpdate: true, updateNote: '' }), { status: 200 });
+    if (s.startsWith('/api/self-update?')) {
+      check(init?.method === 'POST' && init?.headers?.['X-Session-Token'] === 'mocktok', 'self-update uses POST and session token');
+      selfUpdateArgs = Object.fromEntries(new URLSearchParams(s.split('?')[1]));
+      return new Response(JSON.stringify({ updated: true, restarting: true }), { status: 200 });
+    }
     if (s.startsWith('/api/download?')) {
       const q = new URLSearchParams(s.split('?')[1]);
       const data = dlAssets[q.get('name')];
@@ -280,6 +303,13 @@ try {
     $('dualAutoSlot').click();
     await waitFor(() => !$('dualAutoSlot').disabled && $('dualSlotVersion').value === '3.24H');
     check($('dualSlotVersion').value === '3.24H' && $('dualSlotSummary').textContent.includes('ds5dongle-lctech616-hs.bin'), 'slot auto-download fetches upstream repo and selects matching HS variant');
+    $('releaseSource').value = 'gyro';
+    $('releaseRefresh').click();
+    await waitFor(() => !$('appUpdateRun').hidden && $('appUpdateRun').textContent.includes('v3.18-g2.4-rc9'));
+    check($('appVersionTag').textContent.includes('v3.18-g2.4-rc8') && !$('updateBadge').hidden, 'control center update card detects newer release');
+    $('appUpdateRun').click();
+    await waitFor(() => selfUpdateArgs && $('appUpdateStatus').textContent.includes('自动重启'));
+    check(selfUpdateArgs.tag === 'v3.18-g2.4-rc9' && selfUpdateArgs.name === 'DS5-Control-Center-macos-arm64.zip' && selfUpdateArgs.sha256 === ccPkgSha.slice(7), 'control center self-update posts verified sha256');
   } finally { window.fetch = origFetch; }
   location.hash='#tester';await waitFor(()=>!$('tester').hidden);
   $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');

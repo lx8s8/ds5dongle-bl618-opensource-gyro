@@ -1318,7 +1318,10 @@ fieldset {
 #controllerVisual svg text {
   fill: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 13px;
   font-weight: 500;
+  text-anchor: middle;
+  dominant-baseline: central;
   pointer-events: none;
 }
 
