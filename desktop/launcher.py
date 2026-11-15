@@ -46,7 +46,8 @@ def release_url(query):
 
 def fetch_release(url):
     # The page cannot read GitHub release assets (no CORS), so the local tool does.
-    with urllib.request.urlopen(url, timeout=60) as response:
+    req = urllib.request.Request(url, headers={'User-Agent': 'DS5-Control-Center/2.4'})
+    with urllib.request.urlopen(req, timeout=60) as response:
         if not response.geturl().startswith('https://'):
             raise ValueError('Redirected away from HTTPS')
         data = response.read(MAX_DOWNLOAD + 1)

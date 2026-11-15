@@ -8,7 +8,14 @@ export function initReleases({loadPackage,notify}={}){const $=id=>document.getEl
  async function downloadAsset(repo,release,asset,button,status,{confirmed=false}={}){button.disabled=true;status.classList.remove('error');
   try{status.textContent='正在下载 '+asset.name+'…';const dl=await probeLocal();
    if(!dl){window.open(asset.browser_download_url,'_blank','noopener');throw new Error('当前不是本地工具，浏览器无法直接读取 GitHub 附件。已打开下载页，请下载后在下方“网页刷写固件”选择该 ZIP。');}
-   const bytes=await dl({repo,tag:release.tag_name,name:asset.name});
+   let bytes;
+   try{
+    bytes=await dl({repo,tag:release.tag_name,name:asset.name});
+   }catch(dlErr){
+    window.open(asset.browser_download_url,'_blank','noopener');
+    $('webFlash')?.scrollIntoView({behavior:'smooth',block:'center'});
+    throw new Error(dlErr.message+'（若仅开启了浏览器代理扩展，后台程序无法共享代理）。已自动调用浏览器下载 '+asset.name+'，下载完成后在下方“网页刷写固件 → 选择固件包”选中该 ZIP 即可刷写。');
+   }
    if(asset.size&&bytes.length!==asset.size)throw new Error('下载不完整，请重试');
    const verified=await verifyDigest(bytes,asset.digest);
    await loadPackage(asset.name,bytes,{confirmed});

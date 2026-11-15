@@ -89,11 +89,124 @@ fn curl_path() -> PathBuf {
     { PathBuf::from("/usr/bin/curl") }
 }
 
-fn download_release(url: &str) -> Result<Vec<u8>, &'static str> {
+fn has_proxy_env() -> bool {
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
+}
+
+#[cfg(windows)]
+fn normalize_proxy_entry(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() { return None; }
+    let chosen = if raw.contains('=') {
+        let mut found = None;
+        for prefix in ["https=", "http=", "socks=", "socks5="] {
+            for part in raw.split(';') {
+                let part = part.trim();
+                if let Some(rest) = part.strip_prefix(prefix) {
+                    if !rest.trim().is_empty() { found = Some((prefix, rest.trim())); break; }
+                }
+            }
+            if found.is_some() { break; }
+        }
+        match found {
+            Some(("socks=", addr)) | Some(("socks5=", addr)) if !addr.contains("://") => format!("socks5h://{addr}"),
+            Some((_, addr)) => addr.to_string(),
+            None => return None,
+        }
+    } else {
+        raw.to_string()
+    };
+    if chosen.contains("://") { Some(chosen) } else { Some(format!("http://{chosen}")) }
+}
+
+#[cfg(windows)]
+fn detect_system_proxy() -> Option<String> {
+    if has_proxy_env() { return None; }
+    use std::os::windows::process::CommandExt;
+    let reg = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32").join("reg.exe");
+    let out = Command::new(reg)
+        .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut enabled = false;
+    let mut server = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("ProxyEnable") && (trimmed.ends_with("0x1") || trimmed.ends_with(" 1")) {
+            enabled = true;
+        } else if trimmed.starts_with("ProxyServer") {
+            if let Some((_, val)) = trimmed.split_once("REG_SZ") {
+                server = normalize_proxy_entry(val);
+            }
+        }
+    }
+    if enabled { server } else { None }
+}
+
+#[cfg(target_os = "macos")]
+fn detect_system_proxy() -> Option<String> {
+    if has_proxy_env() { return None; }
+    let out = Command::new("/usr/sbin/scutil")
+        .arg("--proxy")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut https_en = false;
+    let mut http_en = false;
+    let mut https_host = None;
+    let mut https_port = None;
+    let mut http_host = None;
+    let mut http_port = None;
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let (k, v) = (k.trim(), v.trim());
+        match k {
+            "HTTPSEnable" => https_en = v == "1",
+            "HTTPSProxy" if !v.is_empty() => https_host = Some(v.to_string()),
+            "HTTPSPort" if !v.is_empty() && v != "0" => https_port = Some(v.to_string()),
+            "HTTPEnable" => http_en = v == "1",
+            "HTTPProxy" if !v.is_empty() => http_host = Some(v.to_string()),
+            "HTTPPort" if !v.is_empty() && v != "0" => http_port = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    if https_en {
+        if let (Some(h), Some(p)) = (https_host, https_port) { return Some(format!("http://{h}:{p}")); }
+    }
+    if http_en {
+        if let (Some(h), Some(p)) = (http_host, http_port) { return Some(format!("http://{h}:{p}")); }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn detect_system_proxy() -> Option<String> { None }
+
+fn run_curl(url: &str, proxy: Option<&str>) -> Result<Vec<u8>, &'static str> {
     let mut command = Command::new(curl_path());
-    command
-        .args(["--disable", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-redirs", "5", "--max-filesize", "8388608", "--max-time", "120", "--output", "-"])
-        .arg(url)
+    command.args([
+        "--disable", "--fail", "--silent", "--show-error", "--location",
+        "--proto", "=https", "--proto-redir", "=https",
+        "--max-redirs", "5", "--max-filesize", "8388608",
+        "--connect-timeout", "20", "--max-time", "120",
+        "-A", "DS5-Control-Center/2.4",
+    ]);
+    #[cfg(windows)]
+    command.arg("--ssl-revoke-best-effort");
+    if let Some(p) = proxy {
+        command.args(["--proxy", p]);
+    }
+    command.args(["--output", "-", url])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -114,6 +227,61 @@ fn download_release(url: &str) -> Result<Vec<u8>, &'static str> {
         Ok(status) if status.success() && !data.is_empty() => Ok(data),
         _ => Err("Download failed"),
     }
+}
+
+#[cfg(windows)]
+fn powershell_download(url: &str) -> Result<Vec<u8>, &'static str> {
+    use std::os::windows::process::CommandExt;
+    let ps = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+        .join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    let script = r#"
+        $ErrorActionPreference = 'Stop'
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor 12288 } catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
+        $wc = New-Object System.Net.WebClient
+        $wc.Proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+        if ($wc.Proxy) { $wc.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
+        $wc.Headers.Add('User-Agent', 'DS5-Control-Center/2.4')
+        $bytes = $wc.DownloadData($env:DS5_DL_URL)
+        if ($bytes.Length -le 0 -or $bytes.Length -gt 8388608) { exit 2 }
+        $stdout = [Console]::OpenStandardOutput()
+        $stdout.Write($bytes, 0, $bytes.Length)
+        $stdout.Flush()
+    "#;
+    let mut cmd = Command::new(ps);
+    cmd.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
+        .env("DS5_DL_URL", url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(0x0800_0000);
+    let mut child = cmd.spawn().map_err(|_| "Download failed")?;
+    let mut data = Vec::new();
+    let read = child.stdout.take().ok_or("Download failed")?.take(MAX_DOWNLOAD as u64 + 1).read_to_end(&mut data);
+    if data.len() > MAX_DOWNLOAD || read.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Download too large or interrupted");
+    }
+    match child.wait() {
+        Ok(status) if status.success() && !data.is_empty() => Ok(data),
+        _ => Err("Download failed"),
+    }
+}
+
+fn download_release(url: &str) -> Result<Vec<u8>, &'static str> {
+    if let Some(proxy) = detect_system_proxy() {
+        if let Ok(data) = run_curl(url, Some(&proxy)) {
+            return Ok(data);
+        }
+    }
+    if let Ok(data) = run_curl(url, None) {
+        return Ok(data);
+    }
+    #[cfg(windows)]
+    if let Ok(data) = powershell_download(url) {
+        return Ok(data);
+    }
+    Err("Download failed")
 }
 
 fn reply(stream: &mut TcpStream, code: u16, mime: &str, bytes: &[u8], head: bool) -> io::Result<()> {
