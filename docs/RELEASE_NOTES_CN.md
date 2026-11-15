@@ -1,4 +1,4 @@
-# G2.4RC2：设备宏与连接稳定性更新
+# G2.4RC3：设备宏与连接稳定性更新
 
 基于上游公开 v3.18，选择性适配 NiceTimeJob/DS5DongleRE R3.28 的代码和设计，来源及 GPL 声明见 NOTICE。本版本不等于合入 sqlCRT v3.24 的全部修复。
 
