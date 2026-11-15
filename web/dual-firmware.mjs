@@ -421,3 +421,21 @@ export async function buildRestoreImage({ current, original, slot = 0, requireLc
   for (const addr of RECORD_ADDRESS) after.fill(255, addr, addr + SECTOR_SIZE);
   return { after, record: state.record, appLength: app.length, segments: diffPlan(current, after) };
 }
+
+// Rebuild a stock layout from a complete firmware package while retaining the
+// device-specific factory partition. User settings and pairing are erased.
+export async function buildCleanRestoreImage({ current, boot2, partition, firmware }) {
+  if (current.length !== FLASH_SIZE) throw new Error('当前闪存必须为 4 MiB');
+  if (hasRootMarker(boot2) || boot2.length > ROOT_LIMIT) throw new Error('Boot2 镜像无效');
+  await checkBfnpCommon(boot2, 'Boot2');
+  await validateAppImage(firmware, { maxLength: 0x200000, label: '单固件' });
+  const after = new Uint8Array(FLASH_SIZE).fill(255);
+  after.set(current.subarray(0x3F8000), 0x3F8000);
+  after.set(boot2, 0);
+  if (partition.length > SECTOR_SIZE) throw new Error('分区表过大');
+  after.set(partition, PT_ADDRESS[0]);
+  after.set(partition, PT_ADDRESS[1]);
+  after.set(firmware, 0x10000);
+  expectedStock(after);
+  return { after, segments: diffPlan(current, after) };
+}

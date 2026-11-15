@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DS5 控制中心 · BL616 / BL618</title>
-<link rel="stylesheet" href="style.css?v=20261115-rc8">
+<link rel="stylesheet" href="style.css?v=20261115-rc9">
 </head>
 <body>
 <header class="site-header">
@@ -251,7 +251,7 @@
 <p id="dualSupport" class="notice error" hidden>当前浏览器不支持 Web Serial，无法使用网页双固件安装、备份与恢复。请使用桌面版 Chrome 或 Edge。</p>
 <div class="actions"><button id="dualInspect" type="button">检测布局（快速读）</button><button id="dualBackup" type="button">读取并下载 4 MiB 整片备份</button></div>
 <pre id="dualDeviceInfo" class="mono hint"></pre>
-<label class="field">维护操作<select id="dualOp"><option value="slot">分槽更新镜像（仅更新槽 0 体感或槽 1 上游，保留两套数据）</option><option value="install">安装双固件（单固件 → 双固件，自动保存原始备份）</option><option value="restore">卸载并恢复单固件（用安装前原始 4 MiB 备份退出双固件）</option></select></label>
+<label class="field">维护操作<select id="dualOp"><option value="slot">分槽更新镜像（仅更新槽 0 体感或槽 1 上游，保留两套数据）</option><option value="install">安装双固件（单固件 → 双固件，自动保存原始备份）</option><option value="restore">卸载并恢复单固件（使用原始备份）</option><option value="clean">无原始备份：清除用户数据并恢复单固件</option></select></label>
 <div id="dualPane_slot" class="grid">
   <label class="field">目标槽位<select id="dualSlotTarget"><option value="0">槽位 0：体感固件（0x10000，上限 1280 KiB）</option><option value="1">槽位 1：上游原版（0x210000，上限 1152 KiB）</option></select></label>
   <label class="field">自动下载 USB（首选 FS / HS）<select id="dualSlotUsb"><option value="fs">FS · 全速兼容（推荐）</option><option value="hs">HS · 高速模式</option></select></label>
@@ -295,6 +295,13 @@
   <label><input id="dualRestoreConfirm" type="checkbox"> 我确认原始 4 MiB 备份来自同一台接收器，恢复前会先保存当前双固件 4 MiB 备份</label>
   <div class="actions"><button id="dualRestoreRun" class="primary" type="button" disabled>读取备份并恢复单固件</button></div>
 </div>
+<div id="dualPane_clean" hidden>
+  <p class="notice">此操作清除两套固件的配对和设置，保留设备 factory 分区。需要 LCTech 616 完整固件 ZIP；写入前会下载当前闪存备份。</p>
+  <label class="field">完整单固件 ZIP<input id="dualCleanFile" type="file" accept=".zip,application/zip"></label>
+  <pre id="dualCleanSummary" class="mono hint"></pre>
+  <label><input id="dualCleanConfirm" type="checkbox"> 我了解配对和设置将被清除，并确认固件包适用于 LCTech 616</label>
+  <div class="actions"><button id="dualCleanRun" class="primary" type="button" disabled>备份当前闪存并恢复单固件</button></div>
+</div>
 <progress id="dualProgress" max="1" value="0" hidden></progress><p id="dualStage" class="hint"></p>
 <p id="dualMessage" class="notice" role="status" aria-live="polite"></p>
 <pre id="dualLog" class="mono" hidden></pre>
@@ -305,6 +312,6 @@
 </section>
 <footer></footer>
 </main>
-<script type="module" src="app.js?v=20261115-rc8"></script>
+<script type="module" src="app.js?v=20261115-rc9"></script>
 </body>
 </html>

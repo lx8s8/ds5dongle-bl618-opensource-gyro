@@ -4,7 +4,7 @@
 #include "bflb_flash.h"
 #include "bflb_gpio.h"
 #include "bflb_mtimer.h"
-#include "bflb_sec_sha.h"
+#include "tinycrypt/sha256.h"
 #include "bflb_irq.h"
 #include "bflb_l1c.h"
 #include <string.h>
@@ -15,10 +15,8 @@ static int write_flash(void*c,uint32_t a,const uint8_t*p,size_t n){(void)c;retur
 static const bm_flash flash={NULL,read_flash,erase_flash,write_flash};
 static bm_record record;
 static uint8_t valid_images;
-/* SEC_ENG SHA DMA and flash reads here must bypass write-back D-Cache. */
+/* Flash reads bypass write-back D-Cache. */
 static uint8_t sha_buf[2048] __attribute__((section(".noncacheable"),aligned(32)));
-static struct bflb_sha256_ctx_s sha_ctx __attribute__((section(".noncacheable"),aligned(32)));
-static uint8_t sha_digest[32] __attribute__((section(".noncacheable"),aligned(32)));
 
 static bool image_ok(const bm_image*im){
  if(read_flash(NULL,im->address,sha_buf,256)||memcmp(sha_buf,"BFNP",4))return false;
@@ -27,18 +25,19 @@ static bool image_ok(const bm_image*im){
  uint32_t flags=sha_buf[120]|sha_buf[121]<<8|sha_buf[122]<<16|((uint32_t)sha_buf[123]<<24);
  uint32_t offset=sha_buf[124]|sha_buf[125]<<8|sha_buf[126]<<16|((uint32_t)sha_buf[127]<<24);
  if((flags&0xF)||!(flags&(1u<<8))||offset!=0x1000)return false;
- struct bflb_device_s*sha=bflb_device_get_by_name("sha");
- if(!sha)return false;memset(&sha_ctx,0,sizeof sha_ctx);
- bflb_sha_init(sha,SHA_MODE_SHA256);bflb_sha256_start(sha,&sha_ctx);
+ struct tc_sha256_state_struct sha_ctx;uint8_t sha_digest[32];
+ if(!tc_sha256_init(&sha_ctx))return false;
  for(uint32_t pos=0;pos<im->image_length;){uint32_t n=im->image_length-pos;if(n>sizeof sha_buf)n=sizeof sha_buf;
-  if(read_flash(NULL,im->address+pos,sha_buf,n)||bflb_sha256_update(sha,&sha_ctx,sha_buf,n))return false;pos+=n;}
- bflb_sha256_finish(sha,&sha_ctx,sha_digest);
+  if(read_flash(NULL,im->address+pos,sha_buf,n)||!tc_sha256_update(&sha_ctx,sha_buf,n))return false;pos+=n;}
+ if(!tc_sha256_final(sha_digest,&sha_ctx))return false;
  return !memcmp(sha_digest,im->sha256,32);
 }
 static bool boot(uint8_t slot,bool usb){
  if(!(valid_images&(1u<<slot))||!bm_select(&flash,slot,&record)||!bm_partition_select(&flash,slot))return false;
  if(usb){bflb_mtimer_delay_ms(100);bm_usb_stop();bflb_mtimer_delay_ms(20);}
- bflb_irq_save();bflb_l1c_dcache_disable();bflb_l1c_icache_disable();
+ /* The SDK handoff cleans and invalidates caches after switching the XIP
+  * mapping. Keep them enabled until that RAM-resident handoff executes. */
+ bflb_irq_save();
  bflb_flash_jump_app(record.image[slot].address+0x1000);
  for(;;){}
 }
@@ -55,16 +54,21 @@ int main(void){
  bool installed=bm_load(&flash,&record)>=0;
  bool requested=installed&&record.manage;
  if(requested)(void)bm_request_manager(&flash,false,&record);
- if(installed)for(int i=0;i<2;i++)if(image_ok(&record.image[i]))valid_images|=1u<<i;
  bm_gesture gesture={0};uint64_t start=bflb_mtimer_get_time_us();
+ int selected=-1;
  while(installed&&!requested){
   uint32_t ms=(bflb_mtimer_get_time_us()-start)/1000;
   if((ms/150)&1)bflb_gpio_set(gpio,GPIO_PIN_27);else bflb_gpio_reset(gpio,GPIO_PIN_27);
   bm_gesture_result next=bm_button(&gesture,bflb_gpio_read(gpio,GPIO_PIN_2)!=0,ms);
-  if(next==BM_BOOT_CURRENT||next==BM_BOOT_OTHER){uint8_t slot=record.selected^(next==BM_BOOT_OTHER);if(!boot(slot,false))break;}
+  if(next==BM_BOOT_CURRENT||next==BM_BOOT_OTHER){selected=record.selected^(next==BM_BOOT_OTHER);break;}
   if(next==BM_MANAGE)break;bflb_mtimer_delay_ms(5);
  }
- bm_usb_start();publish(installed,0,0,0);
+ /* Capture BOOT gestures before hashing large images. In management mode,
+  * enumerate immediately; no slot is offered until validation completes. */
+ if(selected<0){bm_usb_start();publish(installed,0,0,0);}
+ if(installed)for(int i=0;i<2;i++)if(image_ok(&record.image[i]))valid_images|=1u<<i;
+ if(selected>=0){if(boot((uint8_t)selected,false))for(;;){} bm_usb_start();}
+ publish(installed,0,0,0);
  for(;;){
   uint8_t command[63];
   if(bm_usb_command(command)){

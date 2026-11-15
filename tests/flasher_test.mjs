@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { crc32, readZip } from '../web/zip-reader.mjs';
 import { extractAppVersion, loadFirmwarePackage, parsePartitionTable } from '../web/firmware-package.mjs';
-import { CMD, CHUNK, Flasher, packCommand } from '../web/isp-flasher.mjs';
+import { CMD, CHUNK, READ_CHUNK, Flasher, packCommand } from '../web/isp-flasher.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const text = s => new TextEncoder().encode(s);
@@ -146,7 +146,7 @@ class FakeRom {
       case CMD.flashRead: {
         if (this.flaky > 0) { this.flaky--; this.reply(this.fail(0x000c)); break; }
         const address = view.getUint32(0, true), length = view.getUint32(4, true);
-        assert.ok(length <= CHUNK);
+        assert.ok(length <= READ_CHUNK);
         this.reply(this.ok(this.flash.subarray(address, address + length))); break;
       }
       case CMD.flashXipReadStart: this.xip = true; this.reply(this.ok()); break;

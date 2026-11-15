@@ -4,7 +4,7 @@ import { crc32 } from '../web/zip-reader.mjs';
 import {
   DATA_ADDRESS, DATA_LENGTH, FLASH_SIZE, PT_ADDRESS, RECORD_ADDRESS, ROOT_LIMIT,
   ROOT_MARKER, SECTOR_SIZE, SLOT_ADDRESS, SLOT_CAPACITY,
-  buildInstallImage, buildRestoreImage, buildSlotUpdate, diffPlan,
+  buildInstallImage, buildRestoreImage, buildCleanRestoreImage, buildSlotUpdate, diffPlan,
   encodePartitionTable, encodeRecord, expectedStock, inspectDualState,
   normalizeSlotVersion, parseRecord, parseStrictPartitionTable, readActiveRecord,
   validateAppImage, validateManagerImage,
@@ -111,6 +111,12 @@ assert.throws(() => expectedStock(inst.after), /已安装/);
 
 // ---- Slot updates (shorter image wipes stale tail & increments gen on inactive copy) ----
 const dual = inst.after.slice();
+const clean = await buildCleanRestoreImage({ current: dual, boot2: stock.slice(0, 0x2800), partition: stock.slice(0xE000, 0xF000), firmware: gyroV1 });
+expectedStock(clean.after);
+assert.equal(new TextDecoder().decode(clean.after.subarray(0x3F8000, 0x3F800A)), 'FACTORY-ID');
+assert.ok(clean.after.subarray(0x3F1000, 0x3F3000).every(v => v === 255));
+assert.equal(clean.segments.at(-1).address, 0);
+await assert.rejects(buildCleanRestoreImage({ current: dual, boot2: manager, partition: stock.slice(0xE000, 0xF000), firmware: gyroV1 }), /Boot2/);
 dual.set(text('DUAL-GYRO-PSM-V2'), 0x330000);
 const upd0 = await buildSlotUpdate({
   rootHead: dual.subarray(0, ROOT_LIMIT),

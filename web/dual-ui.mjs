@@ -1,6 +1,6 @@
 import {
   FLASH_SIZE, PT_ADDRESS, RECORD_ADDRESS, ROOT_LIMIT, SECTOR_SIZE, SLOT_CAPACITY,
-  buildInstallImage, buildRestoreImage, buildSlotUpdate, inspectDualState,
+  buildInstallImage, buildRestoreImage, buildCleanRestoreImage, buildSlotUpdate, inspectDualState,
   normalizeSlotVersion, sha256, validateManagerImage, validateAppImage, expectedStock,
 } from './dual-firmware.mjs';
 import { extractAppVersion, loadFirmwarePackage } from './firmware-package.mjs';
@@ -56,7 +56,7 @@ export function initDualFirmware() {
   $('dualSupport').hidden = supported;
 
   const state = {
-    slot: null, manager: null, gyro: null, upstream: null, upstreamSnap: null, original: null,
+    slot: null, manager: null, gyro: null, upstream: null, upstreamSnap: null, original: null, clean: null,
   };
 
   const say = (text, error = false) => {
@@ -121,11 +121,11 @@ export function initDualFirmware() {
   function updateButtons() {
     const busy = running || downloading;
     const op = $('dualOp').value;
-    for (const name of ['slot', 'install', 'restore']) $('dualPane_' + name).hidden = op !== name;
+    for (const name of ['slot', 'install', 'restore', 'clean']) $('dualPane_' + name).hidden = op !== name;
     for (const id of ['dualInspect', 'dualBackup', 'dualOp', 'dualSlotTarget', 'dualSlotUsb', 'dualSlotFile',
       'dualSlotVersion', 'dualAutoSlot', 'dualInstallUsb', 'dualAutoMgr', 'dualAutoGyro', 'dualAutoUp', 'dualAutoAll',
       'dualMgrFile', 'dualGyroFile', 'dualGyroVer', 'dualUpFile', 'dualUpVer', 'dualUpSnapFile',
-      'dualOrigFile', 'dualRestoreSlot', 'dualInstallConfirm', 'dualRestoreConfirm']) {
+      'dualOrigFile', 'dualRestoreSlot', 'dualInstallConfirm', 'dualRestoreConfirm', 'dualCleanFile', 'dualCleanConfirm']) {
       if ($(id)) $(id).disabled = busy;
     }
     if ($('dualSlotVariant')) $('dualSlotVariant').disabled = busy || !state.slot || state.slot.variants.length <= 1;
@@ -136,7 +136,24 @@ export function initDualFirmware() {
     $('dualInstallRun').disabled = busy || !supported || !state.manager || !state.gyro || !state.upstream ||
       !$('dualGyroVer').value.trim() || !$('dualUpVer').value.trim() || !$('dualInstallConfirm').checked;
     $('dualRestoreRun').disabled = busy || !supported || !state.original || !$('dualRestoreConfirm').checked;
+    $('dualCleanRun').disabled = busy || !supported || !state.clean || !$('dualCleanConfirm').checked;
   }
+
+  $('dualCleanConfirm').onchange = updateButtons;
+  $('dualCleanFile').onchange = async e => {
+    state.clean = null; $('dualCleanConfirm').checked = false; $('dualCleanSummary').textContent = '';
+    try {
+      const f = e.target.files[0];
+      if (f) {
+        if (f.size > MAX_FILE) throw new Error('固件包过大');
+        const pkg = await loadFirmwarePackage(new Uint8Array(await f.arrayBuffer()));
+        if ((pkg.info.board || pkg.embedded?.board) !== 'lctech616') throw new Error('请选择 LCTech 616 完整固件包');
+        state.clean = pkg;
+        $('dualCleanSummary').textContent = `${f.name} · ${pkg.images.firmware.name} · ${pkg.variant || '默认'} · ${pkg.integrity}`;
+      }
+    } catch (err) { e.target.value = ''; say(err.message, true); }
+    updateButtons();
+  };
 
   const slotPicker = bindAppPicker({
     fileId: 'dualSlotFile', variantFieldId: 'dualSlotVariantField', variantId: 'dualSlotVariant',
@@ -325,7 +342,7 @@ export function initDualFirmware() {
       await task(flasher);
     } catch (err) {
       log('失败：' + err.message);
-      say('操作失败：' + err.message + '（可按住 BOOT 重新插拔再试；除非最后写入步骤中途掉电，否则原有数据未受破坏）', true);
+      say('操作失败：' + err.message + '。如果写入已经开始，闪存可能已部分更改；可按住 BOOT 重新插拔后恢复。', true);
     } finally { await link.close(); running = false; updateButtons(); }
   }
 
@@ -411,6 +428,17 @@ export function initDualFirmware() {
     log(`已保存卸载前双固件备份 ${backupName}，准备保留槽位 ${slot} 恢复单固件（${plan.segments.length} 个变更区段）`);
     await flasher.program(plan.segments, { reset: true, base: 0.4, span: 0.58 });
     say(`已恢复单固件并迁回槽位 ${slot} 的设置与配对数据，请重新插拔 USB。`);
+  });
+
+  $('dualCleanRun').onclick = () => withIsp(async flasher => {
+    const current = await flasher.readFlash(0, FLASH_SIZE, { label: '读取当前 4 MiB 用于备份', verify: true, base: 0.05, span: 0.34 });
+    const images = state.clean.images;
+    const plan = await buildCleanRestoreImage({ current, boot2: images.boot2.data, partition: images.partition.data, firmware: images.firmware.data });
+    const name = `ds5-before-clean-${flasher.info?.chipId || 'bl616'}-${stamp()}.bin`;
+    downloadBlob(name, current);
+    log(`已触发下载 ${name}，准备恢复单固件`);
+    await flasher.program(plan.segments, { reset: true, base: 0.4, span: 0.58 });
+    say('单固件已写入并通过读回校验。配对和设置已清除，请重新插拔 USB。');
   });
 
   updateButtons();

@@ -7,6 +7,8 @@ export const CMD = {
   flashXipReadStart: 0x60, flashXipReadFinish: 0x61,
 };
 export const CHUNK = 2048;
+// Conservative read size validated with Chrome and the BL616 USB-CDC boot ROM.
+export const READ_CHUNK = 256;
 export const BAUD = 115200;
 export const USB_FILTERS = [
   { usbVendorId: 0x349b }, // Bouffalo ROM ISP (CDC)
@@ -30,7 +32,7 @@ export function packCommand(id, payload = [], checksum = true) {
 export class WebSerialLink {
   constructor(port) { this.port = port; this.onData = () => {}; this.onDisconnect = () => {}; }
   async open(baudRate = BAUD) {
-    await this.port.open({ baudRate, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none', bufferSize: 1 << 20 });
+    await this.port.open({ baudRate, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none', bufferSize: 4096 });
     this.writer = this.port.writable.getWriter();
     this.reader = this.port.readable.getReader();
     this.pump = (async () => {
@@ -66,7 +68,7 @@ export class IspClient {
   async need(count, deadline, what) {
     while (this.rx.length < count) {
       const left = deadline - Date.now();
-      if (left <= 0) throw new Error('等待超时：' + what);
+      if (left <= 0) throw new Error(`等待超时：${what}（收到 ${this.rx.length}/${count} 字节）`);
       await this.more(Math.min(left, 100));
     }
   }
@@ -197,11 +199,13 @@ export class Flasher {
     if (this.flashSize && address + length > this.flashSize) throw new Error('读取范围超出 Flash 容量');
     const out = new Uint8Array(length);
     await this.setWait(4000);
-    for (let offset = 0; offset < length; offset += CHUNK) {
+    for (let offset = 0; offset < length; offset += READ_CHUNK) {
       if (this.disconnected) throw new Error('接收器已断开');
-      const size = Math.min(CHUNK, length - offset);
+      const size = Math.min(READ_CHUNK, length - offset);
       const chunk = await this.readChunk(address + offset, size);
       out.set(chunk, offset);
+      // Pacing was needed for reliable large reads on macOS Chrome.
+      await sleep(5);
       this.progress(base + span * 0.9 * (offset + size) / length, label + ' ' + Math.round(100 * (offset + size) / length) + '%');
     }
     if (verify) {
