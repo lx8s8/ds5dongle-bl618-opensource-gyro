@@ -3,6 +3,7 @@ import http.client
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import tempfile
@@ -115,7 +116,8 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual((app_root / 'web/index.html').read_text(encoding='utf-8'), '<html>new</html>')
             self.assertEqual((app_root / 'desktop/VERSION').read_text(encoding='utf-8').strip(), 'v9.9-g9.9')
             self.assertEqual((app_root / 'user_notes.txt').read_text(encoding='utf-8'), 'keep-me')
-            self.assertTrue((app_root / 'desktop/launcher.py').stat().st_mode & stat.S_IXUSR)
+            if os.name != 'nt':
+                self.assertTrue((app_root / 'desktop/launcher.py').stat().st_mode & stat.S_IXUSR)
 
             with self.assertRaises(ValueError):
                 launcher.apply_source_update(good_zip, '0' * 64, app_root)
@@ -168,13 +170,15 @@ class LauncherTests(unittest.TestCase):
                 self.assertTrue(local_info['canSelfUpdate'])
                 q = f'/api/self-update?repo={repo}&tag=v3.18-g2.4-rc9&name=DS5-Control-Center-source.zip&sha256={pkg_sha}'
                 hdrs = {'Origin': srv.origin, 'X-Session-Token': local_info['token']}
+                relaunched = threading.Event()
                 with patch.object(launcher, 'fetch_release', return_value=pkg) as mock_fetch, \
-                        patch.object(launcher, 'spawn_relaunch') as mock_relaunch:
+                        patch.object(launcher, 'spawn_relaunch', side_effect=lambda *args: relaunched.set()) as mock_relaunch:
                     c = http.client.HTTPConnection('127.0.0.1', port)
                     c.request('POST', q, headers=hdrs)
                     resp = c.getresponse()
                     status, body = resp.status, json.loads(resp.read())
                     c.close()
+                    self.assertTrue(relaunched.wait(3), 'server did not schedule the relaunch')
                 self.assertEqual(status, 200)
                 self.assertEqual(body, {'updated': True, 'restarting': True})
                 mock_fetch.assert_called_once()
