@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import threading
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('launcher', ROOT / 'desktop/launcher.py')
@@ -49,6 +50,22 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(status, 204)
         self.thread.join(3)
         self.assertFalse(self.thread.is_alive())
+
+    def test_release_download_is_authenticated_and_restricted(self):
+        repo = 'lx8s8%2Fds5dongle-bl618-opensource-gyro'
+        good = '/api/download?repo=' + repo + '&tag=v3.18-g2.4-rc4&name=ds5dongle-aim61-fs-746aa866.zip'
+        self.assertEqual(self.request('POST', good)[0], 403)
+        auth = {'Origin': self.server.origin, 'X-Session-Token': json.loads(self.request('GET', '/api/local')[2])['token']}
+        for bad in ['repo=evil%2Frepo&tag=v1&name=a.zip', 'repo=' + repo + '&tag=..%2Fx&name=a.zip',
+                    'repo=' + repo + '&tag=v1&name=a.exe', 'repo=' + repo + '&tag=v1&name=a.zip&name=b.zip', 'tag=v1&name=a.zip']:
+            self.assertEqual(self.request('POST', '/api/download?' + bad, auth)[0], 400, bad)
+        with patch.object(launcher, 'fetch_release', return_value=b'PK-test') as fetch:
+            status, headers, body = self.request('POST', good, auth)
+        self.assertEqual((status, body), (200, b'PK-test'))
+        self.assertEqual(headers['Content-Type'], 'application/zip')
+        fetch.assert_called_once_with('https://github.com/lx8s8/ds5dongle-bl618-opensource-gyro/releases/download/v3.18-g2.4-rc4/ds5dongle-aim61-fs-746aa866.zip')
+        with patch.object(launcher, 'fetch_release', side_effect=OSError('offline')):
+            self.assertEqual(self.request('POST', good, auth)[0], 502)
 
 
 if __name__ == '__main__':

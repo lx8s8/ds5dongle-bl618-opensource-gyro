@@ -128,6 +128,11 @@ jobs:
           pattern: firmware-*
           path: dist
           merge-multiple: true
+      - name: Download experimental boot manager
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: boot-manager-experimental
+          path: dist
       - name: Download control center packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -142,6 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(find dist -maxdepth 1 -name 'ds5dongle-*.zip' | wc -l)" -eq 6
+          test -s dist/ds5-boot-manager-lctech616-fs-experimental.bin
           for package in \
             DS5-Control-Center-windows-amd64.zip \
             DS5-Control-Center-macos-arm64.zip \
@@ -149,12 +155,12 @@ jobs:
             DS5-Control-Center-source.zip; do
             test -s "dist/$package"
           done
-          (cd dist && sha256sum *.zip > SHA256SUMS)
+          (cd dist && sha256sum *.zip ds5-boot-manager-*.bin > SHA256SUMS)
           cp docs/RELEASE_NOTES_CN.md "$RUNNER_TEMP/release-notes.md"
           printf '\n源码提交：`%s`\n\n[GitHub Actions 构建记录](%s/%s/actions/runs/%s)\n' \
             "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
             >> "$RUNNER_TEMP/release-notes.md"
-          gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS --verify-tag --draft \
+          gh release create "$RELEASE_TAG" dist/*.zip dist/ds5-boot-manager-*.bin dist/SHA256SUMS --verify-tag --draft \
             --target "$GITHUB_SHA" --title "$RELEASE_TAG · DS5 控制中心" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
           if [[ "$RELEASE_TAG" == *-* ]]; then

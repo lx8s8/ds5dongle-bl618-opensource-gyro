@@ -140,4 +140,4 @@ C 测试覆盖原有体感处理，以及四档、CRC 回退、旧版迁移、�
 
 JS 检查配置、全局快捷动作、导入迁移、足长 HID 包和统计解析。仓库根目录启动 HTTP 服务后，打开 `tests/web_ui_test.html` 运行模拟 WebHID 的表单集成检查；此测试不会访问真实硬件。GitHub Actions 继续执行主机检查和三板型 × FS/HS 六版本编译、打包，下载见 [自动构建说明](CI_CN.md)。
 
-软件测试与编译不能代替真机联调。产物 `build-info.json` 保持 `hardware_validated: false`；当前不提供 OTA 或浏览器串口刷写。
+软件测试与编译不能代替真机联调。产物 `build-info.json` 保持 `hardware_validated: false`；网页刷写使用芯片 BootROM 下载模式，不是固件内 OTA；真机验收前仍视为实验功能。

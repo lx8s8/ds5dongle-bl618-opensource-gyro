@@ -98,6 +98,17 @@ class NativeLauncherTests(unittest.TestCase):
         self.assertEqual(self.request('/api/quit', 'POST', {'Origin': self.origin, 'X-Session-Token': info['token']})[0], 204)
         self.assertEqual(self.proc.wait(timeout=5), 0)
 
+    def test_release_download_requires_session_and_known_repository(self):
+        repo = 'lx8s8%2Fds5dongle-bl618-opensource-gyro'
+        good = '/api/download?repo=' + repo + '&tag=v3.18-g2.4-rc4&name=ds5dongle-aim61-fs-746aa866.zip'
+        self.assertEqual(self.request(good, 'POST')[0], 403)
+        self.assertEqual(self.request(good, 'POST', {'Origin': self.origin, 'X-Session-Token': 'wrong'})[0], 403)
+        auth = {'Origin': self.origin, 'X-Session-Token': json.loads(self.request('/api/local')[2])['token']}
+        for bad in ['repo=evil%2Frepo&tag=v1&name=a.zip', 'repo=' + repo + '&tag=..%2Fx&name=a.zip',
+                    'repo=' + repo + '&tag=v1&name=a.exe', 'repo=' + repo + '&tag=v1%2F..&name=a.zip', 'tag=v1&name=a.zip']:
+            self.assertEqual(self.request('/api/download?' + bad, 'POST', auth)[0], 400, bad)
+        self.assertEqual(self.request(good)[0], 404)
+
     def test_rejects_duplicate_host_and_large_headers(self):
         for raw, status in [
             (f'GET / HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nHost: evil.test\r\n\r\n'.encode(), b'400'),

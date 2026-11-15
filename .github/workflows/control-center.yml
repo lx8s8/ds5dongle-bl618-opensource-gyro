@@ -28,6 +28,10 @@ jobs:
           node tests/control_center_test.mjs
           node tests/boot_manager_test.mjs
           node tests/macros_test.mjs
+          node tests/flasher_test.mjs
+          node tests/updates_test.mjs
+          node tests/dual_firmware_test.mjs
+          node tests/ui_helpers_test.mjs
           python -m unittest discover -s tests -p "test_launcher.py" -v
       - name: Build self-contained application
         run: |

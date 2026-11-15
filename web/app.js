@@ -5,21 +5,67 @@ import { initReceiverUI } from './receiver-ui.mjs';
 import { initTester } from './tester.mjs';
 import {initMacroUI} from './macro-ui.mjs';
 import {initBootManager} from './boot-manager.mjs';
+import {initDualFirmware} from './dual-ui.mjs';
 import { initReleases } from './releases.mjs';
+import { initFlasher } from './flash-ui.mjs';
 import { mouseSpeed, stickPosition } from './mapping-model.mjs';
 import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
 import { DiagnosticCapture } from './diagnostic-capture.mjs';
+import { GYRO_PRESETS, OUTPUT_NAMES, configsMatch, getConfigVisibility, globalsMatch, summarizeGyroConfig } from './ui-helpers.mjs';
 
 const $ = id => document.getElementById(id);
 let transport, receiverUI, tester, macroUI;
 let device, busy = false, sequence = 0, live, samples = [], usbStick, metrics, diagnosticAt = 0, editSlot = 0, manualTouched = false;
 let drafts = Array.from({ length: 4 }, defaults);
+let cleanDrafts = Array.from({ length: 4 }, defaults);
+let cleanGlobal = globalDefaults();
 let reportedProfiles = [];
 const capture = new DiagnosticCapture();
-const deviceButtons = ['apply', 'save', 'read', 'defaults', 'calibrate', 'clearCalibration', 'disconnect', 'activateSlot'];
+const deviceButtons = ['apply', 'save', 'read', 'defaults', 'calibrate', 'clearCalibration', 'disconnect', 'activateSlot', 'configCalibrate'];
 const actionNames = ['未设置', '下一配置', '上一配置', '指定配置', '体感开关', '静止校准', '按住精瞄'];
+const sliderIds = new Set(['sx', 'sy', 'mouseCpd', 'adsMultiplier', 'threshold', 'releaseThreshold', 'noise', 'smooth', 'accel', 'maxTurn', 'stickDeadzone', 'stickPower', 'hold']);
+const segmentedIds = new Set(['output', 'activation', 'trigger', 'horizontal']);
+const fieldContainer = { hold: 'advanced', releaseThreshold: 'advanced', noise: 'advanced', smooth: 'advanced', accel: 'advanced', accelStart: 'advanced', accelEnd: 'advanced', profileSource: 'profile' };
+const fieldWrappers = {}, fieldLabels = {}, syncHooks = [];
 function select(options) { const el = document.createElement('select'); options.forEach(([value, text]) => el.add(new Option(text, value))); return el; }
-function field(label, input) { const row = document.createElement('div'); row.className = 'field'; const text = document.createElement('label'); text.htmlFor = input.id; text.textContent = label; row.append(text, input); return row; }
+function field(label, input, f) {
+  const row = document.createElement('div'); row.className = 'field';
+  if (f?.id) row.dataset.fieldId = f.id;
+  const text = document.createElement('label'); text.htmlFor = input.id; text.textContent = label;
+  if (f?.id) { fieldWrappers[f.id] = row; fieldLabels[f.id] = text; }
+  row.append(text);
+  if (f && segmentedIds.has(f.id)) {
+    const group = document.createElement('div'); group.className = 'segmented'; group.setAttribute('role', 'group'); group.setAttribute('aria-label', label);
+    const pills = f.options.map((name, i) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = name; b.dataset.value = String(i);
+      b.onclick = () => { input.value = String(i); sync(); input.dispatchEvent(new Event('change', { bubbles: true })); };
+      return b;
+    });
+    const sync = () => { const cur = String(input.value); pills.forEach(b => { const on = b.dataset.value === cur; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); }); };
+    input.hidden = true;
+    input.addEventListener('change', sync);
+    syncHooks.push(sync);
+    group.append(...pills);
+    row.append(group, input);
+    return row;
+  }
+  if (f && sliderIds.has(f.id)) {
+    const wrap = document.createElement('div'); wrap.className = 'slider-pair';
+    const range = document.createElement('input'); range.type = 'range'; range.min = f.min; range.max = f.max; range.step = f.step || 1;
+    range.setAttribute('aria-label', label + ' 滑块');
+    const sync = () => { range.value = input.value; };
+    range.oninput = () => { input.value = range.value; input.dispatchEvent(new Event('input', { bubbles: true })); };
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
+    syncHooks.push(sync);
+    wrap.append(range, input);
+    row.append(wrap);
+    return row;
+  }
+  row.append(input);
+  return row;
+}
+function syncFieldControls() { syncHooks.forEach(fn => fn()); }
 function choices(box, mask = 0) {
   buttonNames.forEach((name, bit) => {
     const label = document.createElement('label'); label.className = 'button-choice';
@@ -32,7 +78,23 @@ function setMask(box, mask) { for (const e of box.querySelectorAll('input')) e.c
 for (const f of fields) {
   const input = f.options ? select(f.options.map((name, i) => [i, name])) : document.createElement('input'); input.id = f.id;
   if (!f.options) { input.type = 'number'; input.min = f.min; input.max = f.max; input.step = f.step || 1; input.required = true; }
-  $(f.group + 'Fields').append(field(f.label, input));
+  const group = fieldContainer[f.id] || f.group;
+  $(group + 'Fields').append(field(f.label, input, f));
+}
+if ($('gyroPresets')) {
+  for (const preset of GYRO_PRESETS) {
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'preset-chip'; btn.dataset.preset = preset.id;
+    const title = document.createElement('strong'); title.textContent = preset.label;
+    const hint = document.createElement('span'); hint.textContent = preset.hint;
+    btn.append(title, hint);
+    btn.onclick = () => {
+      drafts[editSlot] = preset.build();
+      render(drafts[editSlot]);
+      refreshConfiguration();
+      message(`已套用预设“${preset.label}”到配置 ${editSlot + 1}，请点击“应用”或“保存”`);
+    };
+    $('gyroPresets').append(btn);
+  }
 }
 choices($('buttons'));
 buttonNames.forEach((name, bit) => { const el = document.createElement('span'); el.textContent = name; el.dataset.bit = bit; $('liveButtons').append(el); });
@@ -57,7 +119,7 @@ for (let i = 0; i < 4; i++) {
   for (const [key, input] of Object.entries(inputs)) { input.id = `shortcut${i}-${key}`; wrappers[key] = field(labels[key], input); grid.append(wrappers[key]); }
   const mask = document.createElement('fieldset'); choices(mask);
   const learn = document.createElement('button'); learn.type = 'button'; learn.textContent = '读取按键'; learn.className = 'learn-shortcut';
-  learn.onclick = () => { if (!live || !(live.flags & 1) || !live.buttons) return message('请按住需要设置的按键', true); setMask(mask, live.buttons); update(); };
+  learn.onclick = () => { if (!live || !(live.flags & 1) || !live.buttons) return message('请按住需要设置的按键', true); setMask(mask, live.buttons); update(); refreshConfiguration(); };
   function update() {
     const action = Number(inputs.action.value), gesture = Number(inputs.gesture.value);
     if (action === 6 && gesture === 2) inputs.gesture.value = 0;
@@ -80,11 +142,18 @@ $('profileSource').onchange = () => profileChoices();
 function render(c) {
   fields.forEach(f => { $(f.id).value = c[f.id]; }); setMask($('buttons'), c.buttons);
   ['invertX', 'invertY', 'suppress', 'allButtons'].forEach((id, bit) => { $(id).checked = !!(c.flags & (1 << bit)); }); profileChoices(c.profiles);
+  if ($('syncXY')) $('syncXY').checked = Math.abs(Number(c.sx) - Number(c.sy)) < 0.005;
+  syncFieldControls();
 }
-function formConfig() {
+function readDraftConfig() {
+  if ($('syncXY')?.checked) { $('sy').value = $('sx').value; syncFieldControls(); }
   const c = Object.fromEntries(fields.map(f => [f.id, Number($(f.id).value)]));
   c.flags = ['invertX', 'invertY', 'suppress', 'allButtons'].reduce((m, id, bit) => m | ($(id).checked ? 1 << bit : 0), 0);
   c.buttons = readMask($('buttons')); c.profiles = c.profileSource ? [...$('profiles').querySelectorAll('input:checked')].reduce((m, e) => m | (1 << e.dataset.profile), 0) : 0;
+  return c;
+}
+function formConfig() {
+  const c = readDraftConfig();
   encodeConfig(c); return c;
 }
 function renderGlobal(g) {
@@ -98,13 +167,20 @@ function globalConfig() {
     actions: shortcutRows.map(r => ({ ...Object.fromEntries(Object.entries(r.inputs).map(([key, input]) => [key, Number(input.value)])), buttons: readMask(r.mask) })) };
   encodeGlobal(g); return g;
 }
-function updateSource() { const n = Number($('switchSource').value); $('nativeBindings').hidden = n !== 1; $('dongleBindings').hidden = n !== 2; $('manualSlot').disabled = n !== 0; controls(); }
+function updateSource() {
+  const n = Number($('switchSource').value);
+  if ($('manualSlotField')) $('manualSlotField').hidden = n !== 0;
+  $('nativeBindings').hidden = n !== 1; $('dongleBindings').hidden = n !== 2; $('manualSlot').disabled = n !== 0;
+  if ($('switchSourceTag')) $('switchSourceTag').textContent = ['手动 / 快捷键', 'Edge Fn 自动跟随', '接收器映射档跟随'][n] || '';
+  controls();
+}
 $('switchSource').onchange = updateSource;
 $('manualSlot').onchange = () => { manualTouched = true; };
+let releaseUI;
 function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); }
 function controls() {
   for (const el of $('settings').querySelectorAll('input, select, button')) el.disabled = busy;
-  deviceButtons.forEach(id => { $(id).disabled = !device || busy; });
+  deviceButtons.forEach(id => { if ($(id)) $(id).disabled = !device || busy; });
   $('connect').disabled = !!device || busy || !navigator.hid;
   $('activateSlot').disabled ||= Number($('switchSource').value) !== 0;
   $('manualSlot').disabled = busy || Number($('switchSource').value) !== 0;
@@ -127,6 +203,7 @@ async function readAll(followActive = false) {
   const info = decodeProfiles(await receive(PROFILE_REPORT)); renderGlobal(info.settings);
   editSlot = followActive && info.active < 4 ? info.active : info.edit;
   for (let i = 0; i < 4; i++) drafts[i] = await command(6, [i]);
+  cleanDrafts = drafts.map(d => ({ ...d })); cleanGlobal = structuredClone(info.settings);
   await command(6, [editSlot]); $('editSlot').value = editSlot; render(drafts[editSlot]); currentSlot(info.active);
 }
 function onInput(e) { if (e.reportId === 1 && e.data.byteLength >= 63) { usbStick = [e.data.getUint8(2), e.data.getUint8(3)]; const bytes=new Uint8Array(e.data.buffer,e.data.byteOffset,e.data.byteLength); capture.input(bytes); tester.updateInput(bytes); macroUI?.input(bytes); } }
@@ -142,6 +219,7 @@ $('connect').onclick = () => action(async () => {
     $('identityWarning').hidden = candidate.vendorId !== 0x1209 || candidate.productId !== 0x0001;
     try { const version = await transport.read(0xF8, null); $('firmware').textContent = new TextDecoder().decode(version).replace(/\0.*$/s, ''); }
     catch { $('firmware').textContent = '读取失败'; }
+    releaseUI.setCurrent($('firmware').textContent);
     $('controllerModel').textContent = candidate.productName; message('连接成功');
   } catch (e) { await close(); throw e; }
 });
@@ -151,6 +229,7 @@ async function close() {
   const previous = device, previousTransport = transport; device = null; transport = null; live = usbStick = metrics = null;
   if (previous) { previous.removeEventListener('inputreport', onInput); if (previousTransport) await previousTransport.close(); else if (previous.opened) await previous.close(); }
   tester?.reset();
+  releaseUI?.clearCurrent();
   $('device').textContent = $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
   $('identityWarning').hidden = true;
   $('testProfile').textContent = '配置 — · Edge —';
@@ -168,17 +247,36 @@ async function apply(save) {
   drafts[editSlot] = formConfig(); const g = globalConfig(); drafts.forEach(encodeConfig);
   if (save) { for (let i = 0; i < 4; i++) { await command(6, [i]); await command(1, drafts[i]); } await command(6, [editSlot]); }
   else { await command(6, [editSlot]); await command(1, drafts[editSlot]); }
-  await command(8, encodeGlobal(g)); if (save) await command(2); manualTouched = false; message(save ? '保存成功' : '已应用');
+  await command(8, encodeGlobal(g)); if (save) await command(2);
+  if (save) cleanDrafts = drafts.map(d => ({ ...d })); else cleanDrafts[editSlot] = { ...drafts[editSlot] };
+  cleanGlobal = structuredClone(g);
+  manualTouched = false; message(save ? '保存成功' : '已应用');
 }
 $('settings').onsubmit = e => { e.preventDefault(); action(() => apply(false)); };
 $('save').onclick = () => action(() => apply(true));
 $('read').onclick = () => action(async () => { await readAll(); message('已读取配置'); });
 $('defaults').onclick = () => action(async () => { await command(6, [editSlot]); drafts[editSlot] = await command(4); render(drafts[editSlot]); message('已恢复默认，请保存'); });
 $('calibrate').onclick = () => action(async () => { await command(3); message('校准中，请保持手柄静止'); });
+if ($('configCalibrate')) $('configCalibrate').onclick = () => $('calibrate').click();
 $('clearCalibration').onclick = () => action(async () => { await command(5); message('已清除校准'); });
-function preset(ms) { $('output').value = Number($('output').value) || 1; $('activation').value = 1; $('trigger').value = 1; $('hold').value = ms; setMask($('buttons'), 0); message('已选择预设，请应用'); }
+if ($('copyProfile')) {
+  $('copyProfile').onclick = () => {
+    const raw = $('copyTarget').value;
+    if (raw === '') return message('请先选择要复制到的目标配置档', true);
+    const target = Number(raw);
+    if (target === editSlot) return message('目标配置与当前编辑配置相同', true);
+    try {
+      drafts[editSlot] = formConfig();
+      drafts[target] = { ...drafts[editSlot] };
+      $('copyTarget').value = '';
+      refreshConfiguration();
+      message(`已将配置 ${editSlot + 1} 复制到配置 ${target + 1}，点击“保存到设备”持久写入`);
+    } catch (e) { message(e.message, true); }
+  };
+}
+function preset(ms) { $('output').value = Number($('output').value) || 1; $('activation').value = 1; $('trigger').value = 1; $('hold').value = ms; setMask($('buttons'), 0); syncFieldControls(); refreshConfiguration(); message('已选择预设，请应用'); }
 $('presetL2').onclick = () => preset(0); $('presetLong').onclick = () => preset(300);
-$('learn').onclick = () => { if (!live || !(live.flags & 1) || !live.buttons) return message('请连接接收器并按住需要设置的按键', true); $('trigger').value = 0; setMask($('buttons'), live.buttons); message('已读取按键'); };
+$('learn').onclick = () => { if (!live || !(live.flags & 1) || !live.buttons) return message('请连接接收器并按住需要设置的按键', true); $('trigger').value = 0; setMask($('buttons'), live.buttons); if ($('buttonPickerDetails')) $('buttonPickerDetails').open = true; syncFieldControls(); refreshConfiguration(); message('已读取按键'); };
 function download(name, text, type) { const url = URL.createObjectURL(new Blob([text], { type })), a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 $('export').onclick = () => action(async () => { drafts[editSlot] = formConfig(); download('ds5-gyro-config.json', JSON.stringify({ version: 2, profiles: drafts, settings: globalConfig() }, null, 2), 'application/json'); });
 $('import').onchange = e => action(async () => {
@@ -231,16 +329,93 @@ function route() {
   if(legacy[target])tester.selectTab(legacy[target]);
   window.scrollTo(0,0);
 }
+function enforceBoundCoherence(changedId) {
+  if (changedId === 'sx' && $('syncXY')?.checked) $('sy').value = $('sx').value;
+  if (changedId === 'syncXY' && $('syncXY')?.checked) $('sy').value = $('sx').value;
+  if (changedId === 'threshold' && Number($('releaseThreshold').value) > Number($('threshold').value)) {
+    $('releaseThreshold').value = $('threshold').value;
+  } else if (changedId === 'releaseThreshold' && Number($('releaseThreshold').value) > Number($('threshold').value)) {
+    $('threshold').value = $('releaseThreshold').value;
+  } else if (changedId === 'accelStart' && Number($('accelStart').value) >= Number($('accelEnd').value)) {
+    $('accelEnd').value = Math.min(2000, Number($('accelStart').value) + 1);
+  } else if (changedId === 'accelEnd' && Number($('accelEnd').value) <= Number($('accelStart').value)) {
+    $('accelStart').value = Math.max(0, Number($('accelEnd').value) - 1);
+  }
+  syncFieldControls();
+}
 function refreshProfiles(){
  if(!$('profileStrip'))return;
  const inactive=!!device&&activeSlot<4&&editSlot!==activeSlot;
  $('editNotice').hidden=!inactive;
  $('editNotice').textContent=inactive?`正在编辑配置 ${editSlot+1}，当前生效为配置 ${activeSlot+1}；此处修改作用于编辑档。`:'';
  const chips=$('profileStrip').children;
- for(let i=0;i<4;i++){const chip=chips[i];if(!chip)continue;chip.classList.toggle('active',i===activeSlot);chip.classList.toggle('editing',i===editSlot);chip.disabled=busy;chip.querySelector('span').textContent=['关闭','鼠标','右摇杆'][i===editSlot?Number($('output').value):drafts[i].output];}
+ const curDraft=readDraftConfig();
+ for(let i=0;i<4;i++){
+  const chip=chips[i];if(!chip)continue;
+  const cfg=i===editSlot?curDraft:drafts[i];
+  const dirty=!configsMatch(cfg,cleanDrafts[i]);
+  chip.classList.toggle('active',i===activeSlot);chip.classList.toggle('editing',i===editSlot);chip.classList.toggle('dirty',dirty);chip.disabled=busy;
+  const gate=cfg.activation===0?'始终':cfg.trigger===1?'L2':cfg.trigger===2?'R2':'按键';
+  chip.querySelector('span').textContent=cfg.output===0?'已关闭':`${OUTPUT_NAMES[cfg.output]} · ${gate} · ${Number(cfg.sx).toFixed(1).replace(/\.0$/,'')}x${dirty?' *':''}`;
+ }
 }
-function refreshConfiguration(){
- refreshProfiles();if(!$('mappingCurve'))return;
+function updateConfigVisibility(c){
+ const vis=getConfigVisibility(c);
+ fieldWrappers.horizontal.hidden=!vis.active;
+ fieldWrappers.activation.hidden=!vis.active;
+ fieldWrappers.trigger.hidden=!vis.usesGate;
+ fieldWrappers.threshold.hidden=!vis.usesThreshold;
+ fieldWrappers.releaseThreshold.hidden=!vis.usesThreshold;
+ fieldWrappers.hold.hidden=!vis.usesHold;
+ fieldWrappers.mouseCpd.hidden=!vis.isMouse;
+ fieldWrappers.adsMultiplier.hidden=!vis.active;
+ fieldWrappers.sy.hidden=!vis.active||!!$('syncXY')?.checked;
+ if(fieldLabels.sx)fieldLabels.sx.textContent=$('syncXY')?.checked?'灵敏度 · 倍（X = Y）':'水平灵敏度 · 倍';
+ if(fieldLabels.threshold)fieldLabels.threshold.textContent=vis.usesTriggerGate?'扳机阈值 · 1–255':'L2 瞄准触发阈值 · 1–255';
+ fieldWrappers.noise.hidden=!vis.active;
+ fieldWrappers.smooth.hidden=!vis.active;
+ fieldWrappers.accel.hidden=!vis.active;
+ fieldWrappers.accelStart.hidden=!vis.usesAccelRange;
+ fieldWrappers.accelEnd.hidden=!vis.usesAccelRange;
+ $('axisHelp').hidden=!vis.active;
+ $('gyroGateBlock').hidden=!vis.usesGate;
+ $('gyroFlagChecks').hidden=!vis.active;
+ if($('suppressWrap'))$('suppressWrap').hidden=!vis.usesGate||!vis.selectedButtonCount;
+ if($('allButtonsWrap'))$('allButtonsWrap').hidden=!vis.usesAllButtons;
+ $('gyroSensitivityCard').hidden=!vis.active;
+ $('gyroStickCard').hidden=!vis.isStick;
+ $('gyroAdvancedDetails').hidden=!vis.active;
+ $('gyroCurveDetails').hidden=!vis.active;
+ if($('selectedButtonsTag')){
+  const picked=buttonNames.filter((_,bit)=>c.buttons&(1<<bit));
+  $('selectedButtonsTag').textContent=picked.length?'已选：'+picked.join(' + '):'未选附加按键';
+ }
+ if($('advancedSummaryTag'))$('advancedSummaryTag').textContent=vis.active?`死区 ${c.noise}°/s · 平滑 ${c.smooth}ms${vis.usesAccelRange?` · 加速 ${c.accel}x`:''}`:'已停用';
+ if($('shortcutCountTag'))$('shortcutCountTag').textContent=`已启用 ${shortcutRows.filter(r=>Number(r.inputs.action.value)!==0).length}/4`;
+ if($('gyroPresets'))for(const btn of $('gyroPresets').children){const p=GYRO_PRESETS.find(x=>x.id===btn.dataset.preset);btn.classList.toggle('active',!!p&&configsMatch(c,p.build()));}
+ if($('configDirty')){
+  let dirty=false;
+  for(let i=0;i<4;i++)if(!configsMatch(i===editSlot?c:drafts[i],cleanDrafts[i]))dirty=true;
+  try{if(!globalsMatch(globalConfig(),cleanGlobal))dirty=true;}catch{dirty=true;}
+  $('configDirty').hidden=!dirty;
+ }
+}
+function refreshConfiguration(event){
+ enforceBoundCoherence(event?.target?.id);
+ const cur=readDraftConfig();
+ updateConfigVisibility(cur);
+ refreshProfiles();
+ if($('configRuleSummary')){
+  try{
+   encodeConfig(cur);
+   $('configRuleSummary').textContent=`当前规则：${summarizeGyroConfig(cur)}`;
+   $('configRuleSummary').classList.remove('warn');
+  }catch(e){
+   $('configRuleSummary').textContent=`参数待完善：${e.message}`;
+   $('configRuleSummary').classList.add('warn');
+  }
+ }
+ if(!$('mappingCurve'))return;
  $('axisHelp').textContent=Number($('horizontal').value)===0?'Yaw：手柄平放时像转盘一样左右平转；左右侧倾主要落在 Roll。':'Roll：像方向盘一样左右侧倾，两侧一高一低；方向相反时使用“水平反转”。';
  try{
   const c=formConfig(),canvas=$('mappingCurve'),ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,pad=48,max=Number($('curveMax').value),fn=c.output===2?stickPosition:mouseSpeed;
@@ -252,23 +427,26 @@ function refreshConfiguration(){
   const speed=Number($('curveSpeed').value);$('curveSpeedLabel').textContent=speed+' °/s';$('curveOutput').textContent=c.output===2?(fn(c,speed)*100).toFixed(1)+'% 满杆':fn(c,speed).toFixed(0)+' counts/s';
  }catch(e){$('curveOutput').textContent='请检查参数';}
 }
-macroUI=initMacroUI({transport:()=>transport,action,message,download});
+macroUI=initMacroUI({transport:()=>transport,action,message,download,getLive:()=>live});
 receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
 tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);},getStickConfig:()=>reportedProfiles[activeSlot]||defaults()});
-initReleases();
+const flasher=initFlasher();
+releaseUI=initReleases({loadPackage:flasher.load,notify:text=>message(text)});
 initBootManager({enterManager:async()=>{
  if(!device?.opened)throw new Error('请先连接体感接收器；运行上游原版时请用上电按键进入管理器');
  try{await transport.legacy(0xF6,4);}catch{throw new Error('当前固件或设备未提供软件进入入口；请使用上电按键。单固件设备无需此操作。');}
 }});
+initDualFirmware();
 for(let i=0;i<4;i++){const button=document.createElement('button');button.className='profile-chip';button.type='button';const title=document.createElement('strong');title.textContent='配置 '+(i+1);button.append(title,document.createElement('span'));button.onclick=()=>{ $('editSlot').value=i;$('editSlot').dispatchEvent(new Event('change'));};$('profileStrip').append(button);}
 $('settings').addEventListener('input',refreshConfiguration);$('settings').addEventListener('change',refreshConfiguration);$('curveSpeed').oninput=$('curveMax').onchange=refreshConfiguration;
 $('curveExport').onclick=()=>{try{const c=formConfig(),rows=['hand_dps,mouse_x_counts_s,mouse_y_counts_s,stick_x,stick_y,mouse_x_ads,stick_x_ads'];for(let s=0;s<=Number($('curveMax').value);s++)rows.push([s,mouseSpeed(c,s,'x'),mouseSpeed(c,s,'y'),stickPosition(c,s,'x'),stickPosition(c,s,'y'),mouseSpeed(c,s,'x',true),stickPosition(c,s,'x',true)].join(','));download('ds5-mapping-curve.csv',rows.join('\n'),'text/csv');}catch(e){message(e.message,true);}};
-window.addEventListener('controller-button-picked',e=>{const bit=e.detail;if(bit<=18){location.hash='#remap';$('remapRows').children[bit]?.querySelector('select')?.focus();}else{location.hash='#config';$('buttons').querySelector(`[data-bit="${bit}"]`)?.focus();}});
+window.addEventListener('controller-button-picked',e=>{const bit=e.detail;if(bit<=18){const all=$('remapFilter')?.querySelector('[data-filter="all"]');if(all)all.click();location.hash='#remap';$('remapRows').children[bit]?.querySelector('select')?.focus();}else{location.hash='#config';if($('buttonPickerDetails'))$('buttonPickerDetails').open=true;$('buttons').querySelector(`[data-bit="${bit}"]`)?.focus();}});
 function themeLabel(){const dark=document.documentElement.dataset.theme==='dark';$('themeToggle').textContent=dark?'浅色':'深色';$('themeToggle').setAttribute('aria-label',dark?'切换浅色外观':'切换深色外观');}
 try{if(localStorage.getItem('ds5-theme')==='dark')document.documentElement.dataset.theme='dark';}catch{}
 themeLabel();
 $('themeToggle').onclick=()=>{const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';themeLabel();try{localStorage.setItem('ds5-theme',dark?'dark':'light');}catch{}};
 window.addEventListener('hashchange',route);
+cleanDrafts=drafts.map(d=>({...d}));cleanGlobal=globalDefaults();
 render(defaults()); renderGlobal(globalDefaults()); controls(); draw(); poll(); route(); initMouseTest(); refreshConfiguration();
 
 initLocalApp({beforeQuit:async()=>{await close();},message});

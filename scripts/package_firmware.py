@@ -166,7 +166,7 @@ def build_package(root, board, usb, sdk_root, output):
             "请勿用安全分区表替换本包分区表，勿整片擦除以免清除配对和设置。\n\n"
             "配置体感：python3 -m http.server 8765 --bind 127.0.0.1 --directory web\n"
             "桌面 Chrome / Edge 打开 http://127.0.0.1:8765/；体感映射默认关闭。\n"
-            "本开源固件未实现网页 OTA；下载本包后需要串口刷写。\n\n"
+            "网页刷写：在控制中心“固件与更新”页选择本 ZIP，按住 BOOT 插入后开始（Chrome / Edge）。\n\n"
             "build-info.json 记录 SDK 和工具链版本；SHA256SUMS 校验包内文件。\n"
             "Linux 校验：sha256sum -c SHA256SUMS\n"
             "macOS 校验：shasum -a 256 -c SHA256SUMS\n",
