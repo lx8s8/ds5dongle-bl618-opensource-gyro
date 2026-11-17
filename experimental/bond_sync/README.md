@@ -13,6 +13,7 @@ With the pinned SDK checked out next to the project, run all prototype tests usi
 ```sh
 LFS=../bouffalo_sdk/components/fs/littlefs/littlefs
 cc -std=c11 -O1 -Wall -Wextra -Werror -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR \
+  -include experimental/bond_sync/host_compat.h \
   -I "$LFS" -I experimental/bond_sync experimental/bond_sync/bond_sync.c \
   experimental/bond_sync/test_bond_sync.c "$LFS/lfs.c" "$LFS/lfs_util.c" \
   -o /tmp/ds5-bond-sync-tests

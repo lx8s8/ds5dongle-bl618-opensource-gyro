@@ -17,7 +17,7 @@ static int read_flash(uint32_t address,uint8_t *buf,uint32_t length){
 #ifdef BOND_ENABLE_ASSERT_GUARD
 if(trigger_assert)bond_assert_failed();
 #endif
-if(address>sizeof flash||length>sizeof flash-address)return -1;memcpy(buf,flash+address,length);return 0;}
+if(address>sizeof flash||length>sizeof flash-address){return -1;}memcpy(buf,flash+address,length);return 0;}
 static int write_flash(uint32_t address,const uint8_t *buf,uint32_t length){if(address<target_base||address>target_base+SIZE||length>target_base+SIZE-address)return -1;for(unsigned i=0;i<length;i++){if((flash[address+i]&buf[i])!=buf[i])return -1;flash[address+i]&=buf[i];}return 0;}
 static int erase_flash(uint32_t address,uint32_t length){if(address<target_base||address>target_base+SIZE||length>target_base+SIZE-address)return -1;memset(flash+address,255,length);return 0;}
 int main(void){

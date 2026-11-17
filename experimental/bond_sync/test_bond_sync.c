@@ -23,7 +23,7 @@ int main(void){disk sd,base;lfs_t src,dst;struct lfs_config sc,dc;fresh(&sd,&src
  int checked=0;
  for(int partial=0;partial<2;partial++)for(int fail=0;fail<100;fail++){
   disk trial=original;trial.fail_after=fail;trial.writes=0;trial.dead=false;trial.partial=partial;dc=config(&trial);assert(!lfs_mount(&dst,&dc));int result=bond_sync_lfs(&src,&dst,&workspace);int writes=trial.writes;
-  if(!trial.dead)assert(!lfs_unmount(&dst));trial.dead=false;trial.fail_after=-1;dc=config(&trial);assert(!lfs_mount(&dst,&dc));check_cfg(&dst);assert(get(&dst,KEY,out,sizeof out)==196);assert(!memcmp(out,old,196)||!memcmp(out,newkey,196));int retry=bond_sync_lfs(&src,&dst,&workspace);assert(retry==BOND_SYNC_OK||retry==BOND_SYNC_CHANGED);assert(get(&dst,KEY,out,196)==196&&!memcmp(out,newkey,196));check_cfg(&dst);assert(!lfs_unmount(&dst));checked++;
+  if(!trial.dead){assert(!lfs_unmount(&dst));}trial.dead=false;trial.fail_after=-1;dc=config(&trial);assert(!lfs_mount(&dst,&dc));check_cfg(&dst);assert(get(&dst,KEY,out,sizeof out)==196);assert(!memcmp(out,old,196)||!memcmp(out,newkey,196));int retry=bond_sync_lfs(&src,&dst,&workspace);assert(retry==BOND_SYNC_OK||retry==BOND_SYNC_CHANGED);assert(get(&dst,KEY,out,196)==196&&!memcmp(out,newkey,196));check_cfg(&dst);assert(!lfs_unmount(&dst));checked++;
   if(result==BOND_SYNC_CHANGED && fail>=writes)break;
  }
  disk trial=original;trial.fail_after=-1;dc=config(&trial);assert(!lfs_mount(&dst,&dc));assert(bond_sync_lfs(&src,&dst,&workspace)==BOND_SYNC_CHANGED);check_cfg(&dst);assert(get(&dst,KEY,out,sizeof out)==196&&!memcmp(out,newkey,196));assert(bond_sync_lfs(&src,&dst,&workspace)==BOND_SYNC_OK);
@@ -33,7 +33,7 @@ int main(void){disk sd,base;lfs_t src,dst;struct lfs_config sc,dc;fresh(&sd,&src
   * a retry must converge without changing the receiver configuration. */
  for(int partial=0;partial<2;partial++)for(int fail=0;fail<100;fail++){
   disk tmp=original;tmp.fail_after=fail;tmp.writes=0;tmp.dead=false;tmp.partial=partial;struct lfs_config tc=config(&tmp);lfs_t tl;assert(!lfs_mount(&tl,&tc));int result=bond_sync_lfs(&src,&tl,&workspace);int writes=tmp.writes;
-  if(!tmp.dead)assert(!lfs_unmount(&tl));tmp.dead=false;tmp.fail_after=-1;tc=config(&tmp);assert(!lfs_mount(&tl,&tc));check_cfg(&tl);assert(get(&tl,KEY,out,196)==196);assert(!memcmp(out,old,196)||!memcmp(out,empty,196));int retry=bond_sync_lfs(&src,&tl,&workspace);assert(retry==BOND_SYNC_OK||retry==BOND_SYNC_CHANGED);assert(get(&tl,KEY,out,196)==196&&!memcmp(out,empty,196));check_cfg(&tl);assert(!lfs_unmount(&tl));checked++;if(result==BOND_SYNC_CHANGED&&fail>=writes)break;
+  if(!tmp.dead){assert(!lfs_unmount(&tl));}tmp.dead=false;tmp.fail_after=-1;tc=config(&tmp);assert(!lfs_mount(&tl,&tc));check_cfg(&tl);assert(get(&tl,KEY,out,196)==196);assert(!memcmp(out,old,196)||!memcmp(out,empty,196));int retry=bond_sync_lfs(&src,&tl,&workspace);assert(retry==BOND_SYNC_OK||retry==BOND_SYNC_CHANGED);assert(get(&tl,KEY,out,196)==196&&!memcmp(out,empty,196));check_cfg(&tl);assert(!lfs_unmount(&tl));checked++;if(result==BOND_SYNC_CHANGED&&fail>=writes)break;
  }
  assert(bond_sync_lfs(&src,&dst,&workspace)==BOND_SYNC_CHANGED);assert(get(&dst,KEY,out,196)==196&&!memcmp(out,empty,196));check_cfg(&dst);
  assert(!lfs_remove(&src,KEY));assert(bond_sync_lfs(&src,&dst,&workspace)==BOND_SYNC_CONFLICT);assert(get(&dst,KEY,out,196)==196&&!memcmp(out,empty,196));

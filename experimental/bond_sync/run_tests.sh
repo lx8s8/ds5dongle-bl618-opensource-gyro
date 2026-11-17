@@ -6,7 +6,7 @@ lfs="$sdk/components/fs/littlefs/littlefs"
 test -f "$lfs/lfs.c"
 out="$(mktemp -d "${TMPDIR:-/tmp}/ds5-bond-test.XXXXXX")"
 trap 'rm -r "$out"' EXIT
-common=(-std=c11 -O1 -Wall -Wextra -Werror -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -DLFS_NO_MALLOC -I "$lfs" -I "$root/experimental/bond_sync")
+common=(-std=c11 -O1 -Wall -Wextra -Werror -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -DLFS_NO_MALLOC -include "$root/experimental/bond_sync/host_compat.h" -I "$lfs" -I "$root/experimental/bond_sync")
 "${CC:-cc}" "${common[@]}" "$root/experimental/bond_sync/bond_sync.c" "$root/experimental/bond_sync/test_bond_sync.c" "$lfs/lfs.c" "$lfs/lfs_util.c" -o "$out/sync-test"
 "$out/sync-test"
 "${CC:-cc}" "${common[@]}" "$root/experimental/bond_sync/bond_sync.c" "$root/experimental/bond_sync/extension/extension.c" "$root/experimental/bond_sync/test_extension.c" "$lfs/lfs.c" "$lfs/lfs_util.c" -o "$out/extension-test"
