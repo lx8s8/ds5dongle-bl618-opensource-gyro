@@ -116,7 +116,15 @@ jobs:
           fi
       - name: Build guarded pairing manager for validation
         if: matrix.board == 'lctech616' && matrix.usb == 'fs'
-        run: bash experimental/bond_sync/build_guarded_manager.sh "$RUNNER_TEMP/ds5-bond-guarded"
+        run: |
+          set +e
+          bash experimental/bond_sync/build_guarded_manager.sh "$RUNNER_TEMP/ds5-bond-guarded" > "$RUNNER_TEMP/bond-build.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/bond-build.log"
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'import pathlib,sys; text=pathlib.Path(sys.argv[1]).read_text()[-12000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=Pairing manager build failure details::" + text)' "$RUNNER_TEMP/bond-build.log"
+            exit "$status"
+          fi
       - name: Upload guarded pairing manager for validation
         if: matrix.board == 'lctech616' && matrix.usb == 'fs'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
