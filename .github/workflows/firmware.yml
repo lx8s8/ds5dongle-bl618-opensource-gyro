@@ -105,7 +105,15 @@ jobs:
           node-version: '24'
       - name: Test pairing synchronization and interrupted writes
         if: matrix.board == 'lctech616' && matrix.usb == 'fs'
-        run: bash experimental/bond_sync/run_tests.sh
+        run: |
+          set +e
+          bash experimental/bond_sync/run_tests.sh > "$RUNNER_TEMP/bond-tests.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/bond-tests.log"
+          if [ "$status" -ne 0 ]; then
+            python3 -c 'import pathlib,sys; text=pathlib.Path(sys.argv[1]).read_text()[-12000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"); print("::error title=Pairing test failure details::" + text)' "$RUNNER_TEMP/bond-tests.log"
+            exit "$status"
+          fi
       - name: Build guarded pairing manager for validation
         if: matrix.board == 'lctech616' && matrix.usb == 'fs'
         run: bash experimental/bond_sync/build_guarded_manager.sh "$RUNNER_TEMP/ds5-bond-guarded"
