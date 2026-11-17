@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {BootManager,decodeBootStatus,requestBootManager} from '../web/boot-manager.mjs';
+import {BootManager,decodeBootStatus,requestBootManager,enterManagerFromUpstream} from '../web/boot-manager.mjs';
 function report(){const a=new Uint8Array(64);a[0]=0x70;a.set(new TextEncoder().encode('DBMR'),1);a[5]=1;a[6]=1;a[7]=0;a[8]=3;a[12]=1;a[61]=1;return a;}
 const p=report();assert.equal(decodeBootStatus(p).valid,3);assert.equal(decodeBootStatus(p).selected,0);
 for(const offset of [0,1,5,12,61]){const b=p.slice();b[offset]^=128;assert.throws(()=>decodeBootStatus(b));}
@@ -13,4 +13,10 @@ p[8]=1;await assert.rejects(()=>new BootManager(fake).boot(1),/校验/);
 const gamepad={...fake,collections:[{usagePage:1,featureReports:[{reportId:0xFC}]}]};
 await assert.rejects(()=>requestBootManager({getDevices:async()=>[gamepad],requestDevice:async()=>[gamepad]}),/日常手柄/);
 assert.equal(await requestBootManager({requestDevice:async()=>[]}),undefined);
+const holdReport=report();let resetSent=false,holdSent=false;
+const upstream={opened:false,collections:[{featureReports:[{reportId:0xf6}]}],async open(){this.opened=true;},async close(){this.opened=false;},async sendFeatureReport(id,data){assert.equal(id,0xf6);assert.equal(data[0],3);resetSent=true;}};
+const holdManager={...fake,opened:false,async open(){this.opened=true;},async close(){this.opened=false;},async sendFeatureReport(id,data){assert.equal(id,0x70);assert.equal(data[0],2);holdSent=true;holdReport[9]=2;holdReport[10]=0;holdReport[11]=data[1];},async receiveFeatureReport(){return new DataView(holdReport.buffer);}};
+await enterManagerFromUpstream({requestDevice:async()=>[upstream],getDevices:async()=>[holdManager]});
+assert.ok(resetSent&&holdSent);assert.equal(upstream.opened,false);assert.equal(holdManager.opened,false);
+await assert.rejects(enterManagerFromUpstream({requestDevice:async()=>[{collections:[]}]}),/不支持/);
 console.log('boot manager: feature framing, strict identity, corrupt slots, ACK and cancellation passed');

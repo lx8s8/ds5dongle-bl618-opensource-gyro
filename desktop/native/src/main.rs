@@ -692,6 +692,94 @@ fn open_browser(url: &str) {
     let _ = Command::new("xdg-open").arg(url).spawn();
 }
 
+// Finder reopens an already-running .app by delivering an Apple event to its
+// application delegate; it does not execute the binary a second time.
+#[cfg(target_os = "macos")]
+mod macos_lifecycle {
+    use std::{ffi::{c_char, c_void, CStr}, mem, ptr, sync::OnceLock};
+    use super::open_browser;
+
+    type Id = *mut c_void;
+    static ORIGIN: OnceLock<String> = OnceLock::new();
+
+    #[link(name = "AppKit", kind = "framework")]
+    extern "C" {}
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> Id;
+        fn sel_registerName(name: *const c_char) -> Id;
+        fn objc_allocateClassPair(superclass: Id, name: *const c_char, extra: usize) -> Id;
+        fn objc_registerClassPair(class: Id);
+        fn class_addMethod(class: Id, selector: Id, implementation: extern "C" fn(), types: *const c_char) -> bool;
+        fn objc_msgSend();
+    }
+
+    unsafe fn selector(name: &'static CStr) -> Id { sel_registerName(name.as_ptr()) }
+    unsafe fn send0(target: Id, name: &'static CStr) -> Id {
+        let send: unsafe extern "C" fn(Id, Id) -> Id = mem::transmute(objc_msgSend as *const ());
+        send(target, selector(name))
+    }
+    unsafe fn send1(target: Id, name: &'static CStr, value: Id) {
+        let send: unsafe extern "C" fn(Id, Id, Id) = mem::transmute(objc_msgSend as *const ());
+        send(target, selector(name), value);
+    }
+    extern "C" fn reopen(_delegate: Id, _cmd: Id, _app: Id, _visible: bool) -> bool {
+        if let Some(origin) = ORIGIN.get() { open_browser(origin); }
+        true
+    }
+
+    pub fn run(origin: String) -> std::io::Result<()> {
+        ORIGIN.set(origin).map_err(|_| std::io::Error::other("Application already initialized"))?;
+        unsafe {
+            let pool = send0(objc_getClass(c"NSAutoreleasePool".as_ptr()), c"new");
+            let app = send0(objc_getClass(c"NSApplication".as_ptr()), c"sharedApplication");
+            let class = objc_allocateClassPair(objc_getClass(c"NSObject".as_ptr()), c"DS5ControlCenterDelegate".as_ptr(), 0);
+            if class.is_null() { return Err(std::io::Error::other("Cannot initialize application delegate")); }
+            let imp: extern "C" fn() = mem::transmute(reopen as extern "C" fn(Id, Id, Id, bool) -> bool);
+            if !class_addMethod(class, selector(c"applicationShouldHandleReopen:hasVisibleWindows:"), imp, c"B@:@B".as_ptr()) {
+                return Err(std::io::Error::other("Cannot register application delegate"));
+            }
+            objc_registerClassPair(class);
+            let delegate = send0(class, c"new");
+            send1(app, c"setDelegate:", delegate);
+            send0(app, c"run");
+            send1(app, c"setDelegate:", ptr::null_mut());
+            send0(delegate, c"release");
+            send0(pool, c"drain");
+        }
+        Ok(())
+    }
+
+    pub fn stop() {
+        unsafe {
+            let app = send0(objc_getClass(c"NSApplication".as_ptr()), c"sharedApplication");
+            let send: unsafe extern "C" fn(Id, Id, Id, Id, bool) = mem::transmute(objc_msgSend as *const ());
+            // stop: only exits after another event arrives; terminate: also
+            // works when this background-only application has no windows.
+            send(app, selector(c"performSelectorOnMainThread:withObject:waitUntilDone:"), selector(c"terminate:"), ptr::null_mut(), false);
+        }
+    }
+}
+
+fn serve_loop(listener: TcpListener, server: Arc<Server>) -> io::Result<()> {
+    while !server.stopping.load(Ordering::Acquire) {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                if server.connections.load(Ordering::Relaxed) >= 32 { drop(stream); continue; }
+                server.connections.fetch_add(1, Ordering::Relaxed);
+                let state = Arc::clone(&server);
+                thread::spawn(move || {
+                    let _ = serve(stream, &state);
+                    state.connections.fetch_sub(1, Ordering::Relaxed);
+                });
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(10)),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 fn run() -> io::Result<()> {
     let mut port = 8765u16;
     let mut open = true;
@@ -714,22 +802,14 @@ fn run() -> io::Result<()> {
         io::stdout().flush()?;
     }
     if open { open_browser(&server.origin); }
-    while !server.stopping.load(Ordering::Acquire) {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                if server.connections.load(Ordering::Relaxed) >= 32 { drop(stream); continue; }
-                server.connections.fetch_add(1, Ordering::Relaxed);
-                let state = Arc::clone(&server);
-                thread::spawn(move || {
-                    let _ = serve(stream, &state);
-                    state.connections.fetch_sub(1, Ordering::Relaxed);
-                });
-            }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(10)),
-            Err(e) => return Err(e),
-        }
+    #[cfg(target_os = "macos")]
+    if open {
+        let origin = server.origin.clone();
+        let worker = thread::spawn(move || { let result = serve_loop(listener, server); macos_lifecycle::stop(); result });
+        macos_lifecycle::run(origin)?;
+        return worker.join().map_err(|_| io::Error::other("Server thread failed"))?;
     }
-    Ok(())
+    serve_loop(listener, server)
 }
 fn main() {
     if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); }

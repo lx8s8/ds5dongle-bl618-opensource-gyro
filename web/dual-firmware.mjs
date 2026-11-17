@@ -61,6 +61,13 @@ async function checkBfnpCommon(bytes, label) {
   return { flags, offset, payloadLength, hashIgnored };
 }
 
+export async function validateStockBoot2Backup(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < ROOT_LIMIT || hasRootMarker(bytes)) throw new Error('单固件 Boot2 备份无效');
+  const offset=u32le(bytes,124),length=u32le(bytes,132),end=offset+length;
+  if (offset<256 || end>ROOT_LIMIT || end<offset) throw new Error('单固件 Boot2 长度无效');
+  return checkBfnpCommon(bytes.subarray(0,end),'单固件 Boot2');
+}
+
 export async function validateManagerImage(bytes) {
   if (bytes.length > ROOT_LIMIT) throw new Error('启动管理器镜像超出 0xE000 保留区上限');
   if (!hasRootMarker(bytes)) throw new Error('所选文件不是 DS5 实验性双固件启动管理器（缺少 DS5-DBM1-ROOT 标记）');

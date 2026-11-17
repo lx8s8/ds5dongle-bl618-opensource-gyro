@@ -63,6 +63,8 @@ const mgrRelease = {
   ],
 };
 assert.deepEqual(bootManagerAssets(mgrRelease, 'lctech616', 'fs').map(a => a.name), ['ds5-boot-manager-lctech616-fs-experimental.bin']);
+const withBond={assets:[...mgrRelease.assets,{name:'ds5-boot-manager-lctech616-fs-bondsync.bin'}]};
+assert.equal(bootManagerAssets(withBond,'lctech616','fs')[0].name,'ds5-boot-manager-lctech616-fs-bondsync.bin');
 const mgrFallback = findLatestReleaseAsset([mgrRelease], {
   includePrerelease: false, allowPrereleaseFallback: true,
   pickAssets: r => bootManagerAssets(r, 'lctech616', 'fs'),

@@ -11,6 +11,7 @@ commands = [
     ['make', '-C', 'tests', 'check'],
     ['make', '-C', 'tests', 'sanitize'],
     [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_pack*.py', '-v'],
+    [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_manager_release_identity.py', '-v'],
 ]
 for command in commands:
     result = subprocess.run(command, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

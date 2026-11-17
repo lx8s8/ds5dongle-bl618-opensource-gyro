@@ -1,3 +1,5 @@
+import { parseBondPackage } from './bond-package.mjs';
+import { prepareBondUpgrade, confirmBondUpgrade, recoverBondUpgrade, prepareBondFirstInstall, confirmBondFirstInstall } from './bond-transaction.mjs';
 import {
   FLASH_SIZE, PT_ADDRESS, RECORD_ADDRESS, ROOT_LIMIT, SECTOR_SIZE, SLOT_CAPACITY,
   buildInstallImage, buildRestoreImage, buildCleanRestoreImage, buildSlotUpdate, inspectDualState,
@@ -56,7 +58,7 @@ export function initDualFirmware() {
   $('dualSupport').hidden = supported;
 
   const state = {
-    slot: null, manager: null, gyro: null, upstream: null, upstreamSnap: null, original: null, clean: null,
+    slot: null, manager: null, managerBundle: null, managerPackage: null, firstPrepared: null, firstBackup: null, gyro: null, upstream: null, upstreamSnap: null, original: null, clean: null, bondPackage: null, bondPrepared: null, bondBackup: null,
   };
 
   const say = (text, error = false) => {
@@ -121,11 +123,12 @@ export function initDualFirmware() {
   function updateButtons() {
     const busy = running || downloading;
     const op = $('dualOp').value;
-    for (const name of ['slot', 'install', 'restore', 'clean']) $('dualPane_' + name).hidden = op !== name;
+    for (const name of ['slot', 'install', 'restore', 'clean', 'bond']) $('dualPane_' + name).hidden = op !== name;
     for (const id of ['dualInspect', 'dualBackup', 'dualOp', 'dualSlotTarget', 'dualSlotUsb', 'dualSlotFile',
       'dualSlotVersion', 'dualAutoSlot', 'dualInstallUsb', 'dualAutoMgr', 'dualAutoGyro', 'dualAutoUp', 'dualAutoAll',
       'dualMgrFile', 'dualGyroFile', 'dualGyroVer', 'dualUpFile', 'dualUpVer', 'dualUpSnapFile',
-      'dualOrigFile', 'dualRestoreSlot', 'dualInstallConfirm', 'dualRestoreConfirm', 'dualCleanFile', 'dualCleanConfirm']) {
+      'dualOrigFile', 'dualRestoreSlot', 'dualInstallConfirm', 'dualRestoreConfirm', 'dualCleanFile', 'dualCleanConfirm',
+      'bondPackageFile', 'bondBackupFile', 'bondConfirm', 'dualFirstBackupFile']) {
       if ($(id)) $(id).disabled = busy;
     }
     if ($('dualSlotVariant')) $('dualSlotVariant').disabled = busy || !state.slot || state.slot.variants.length <= 1;
@@ -137,7 +140,31 @@ export function initDualFirmware() {
       !$('dualGyroVer').value.trim() || !$('dualUpVer').value.trim() || !$('dualInstallConfirm').checked;
     $('dualRestoreRun').disabled = busy || !supported || !state.original || !$('dualRestoreConfirm').checked;
     $('dualCleanRun').disabled = busy || !supported || !state.clean || !$('dualCleanConfirm').checked;
+    $('dualFirstBackupPane').hidden = !state.managerBundle;
+    $('dualInstallRun').textContent = state.managerBundle ? '读取设备并下载安装前备份' : '读取备份并安装双固件';
+    $('dualFirstCommit').disabled = busy || !supported || !state.firstPrepared || !state.firstBackup || !$('dualInstallConfirm').checked;
+    $('bondPrepare').disabled = busy || !supported || !state.bondPackage;
+    $('bondInstall').disabled = busy || !supported || !state.bondPrepared || !state.bondBackup || !$('bondConfirm').checked;
+    $('bondRecover').disabled = busy || !supported || !state.bondBackup || !$('bondConfirm').checked;
   }
+
+  $('dualFirstBackupFile').onchange = async e => {
+    state.firstBackup=null;$('dualFirstBackupSummary').textContent='';const f=e.target.files[0];
+    try {if(f){if(f.size!==FLASH_SIZE+64)throw new Error('恢复备份文件长度无效');state.firstBackup=new Uint8Array(await f.arrayBuffer());$('dualFirstBackupSummary').textContent=`已选择 ${f.name}，连接设备后核对芯片与校验值`;}}
+    catch(err){e.target.value='';say(err.message,true);}updateButtons();
+  };
+  $('bondConfirm').onchange = updateButtons;
+  $('bondPackageFile').onchange = async e => {
+    state.bondPackage=null;state.bondPrepared=null;$('bondPackageSummary').textContent='';
+    const f=e.target.files[0];
+    try { if(f){if(f.size>MAX_FILE)throw new Error('管理器包过大');const bytes=new Uint8Array(await f.arrayBuffer());await parseBondPackage(bytes);state.bondPackage=bytes;$('bondPackageSummary').textContent=`${f.name} · 包校验通过`;}}
+    catch(err){e.target.value='';say(err.message,true);} updateButtons();
+  };
+  $('bondBackupFile').onchange = async e => {
+    state.bondBackup=null;$('bondBackupSummary').textContent='';const f=e.target.files[0];
+    try {if(f){if(f.size!==FLASH_SIZE+64)throw new Error('恢复备份文件长度无效');state.bondBackup=new Uint8Array(await f.arrayBuffer());$('bondBackupSummary').textContent=`已选择 ${f.name}，连接设备后核对芯片与校验值`;}}
+    catch(err){e.target.value='';say(err.message,true);}updateButtons();
+  };
 
   $('dualCleanConfirm').onchange = updateButtons;
   $('dualCleanFile').onchange = async e => {
@@ -177,10 +204,11 @@ export function initDualFirmware() {
   });
 
   async function loadManagerBytes(name, bytes, extra = '', { scroll = false } = {}) {
-    await validateManagerImage(bytes);
-    state.manager = bytes;
+    state.manager=null;state.managerBundle=null;state.managerPackage=null;state.firstPrepared=null;state.firstBackup=null;
+    if(bytes.length>ROOT_LIMIT){state.managerBundle=await parseBondPackage(bytes);state.managerPackage=bytes;state.manager=state.managerBundle.manager;state.bondPackage=bytes;$('bondPackageSummary').textContent=`${name} · 包校验通过`; }
+    else {await validateManagerImage(bytes);state.manager=bytes;}
     if ($('dualMgrFile')) $('dualMgrFile').value = '';
-    $('dualMgrSummary').textContent = `${name} · ${bytes.length} B · SHA256 验证通过${extra}`;
+    $('dualMgrSummary').textContent = `${name} · ${bytes.length} B · SHA256 验证通过${state.managerBundle?' · 支持配对同步':''}${extra}`;
     if (scroll) {
       if ($('dualToolsDetails')) $('dualToolsDetails').open = true;
       $('dualOp').value = 'install';
@@ -296,7 +324,7 @@ export function initDualFirmware() {
   });
 
   $('dualMgrFile').onchange = async e => {
-    state.manager = null; $('dualMgrSummary').textContent = '';
+    state.manager = null; state.managerBundle = null; state.managerPackage = null; state.firstPrepared = null; state.firstBackup = null; $('dualMgrSummary').textContent = '';
     const f = e.target.files[0]; if (!f) { updateButtons(); return; }
     try {
       await loadManagerBytes(f.name, new Uint8Array(await f.arrayBuffer()));
@@ -389,6 +417,21 @@ export function initDualFirmware() {
     say('4 MiB 备份已下载并校验一致。妥善保存此文件（含蓝牙配对与校准数据），请勿公开发布。');
   });
 
+  $('bondPrepare').onclick = () => withIsp(async flasher => {
+    const prepared=await prepareBondUpgrade(flasher,state.bondPackage);
+    state.bondPrepared=prepared;state.bondBackup=null;$('bondBackupFile').value='';$('bondConfirm').checked=false;
+    const name=`ds5-bond-${prepared.chipId}-${stamp()}.ds5backup`;downloadBlob(name,prepared.backup);
+    say('已触发备份下载。请确认文件已保存，然后在下方重新选择它。');
+  });
+  $('bondInstall').onclick = () => withIsp(async flasher => {
+    await confirmBondUpgrade(flasher,state.bondPrepared,state.bondBackup);
+    state.bondPrepared=null;say('管理器已升级并校验；接收器正在重启。');
+  });
+  $('bondRecover').onclick = () => withIsp(async flasher => {
+    await recoverBondUpgrade(flasher,state.bondBackup);
+    state.bondPrepared=null;say('恢复操作完成；请重新插拔接收器。');
+  });
+
   $('dualSlotRun').onclick = () => withIsp(async flasher => {
     const slot = Number($('dualSlotTarget').value);
     const version = normalizeSlotVersion($('dualSlotVersion').value, '槽位版本号');
@@ -398,24 +441,42 @@ export function initDualFirmware() {
     const plan = await buildSlotUpdate({ ...meta, slot, firmware: state.slot.firmware, version });
     log(`分槽更新槽位 ${slot} → ${version}，切换至 DBM1 副本 ${plan.targetCopy}（第 ${plan.record.gen} 代）`);
     await flasher.program(plan.segments, { reset: true, base: 0.18, span: 0.8 });
+    $('dualDeviceInfo').textContent = formatDualState({ mode: 'dual', record: plan.record });
     say(`槽位 ${slot} 已更新为 ${version} 并校验通过，接收器正在重启。重新插拔 USB 后即可使用。`);
   });
 
   $('dualInstallRun').onclick = () => withIsp(async flasher => {
     const gyroVersion = normalizeSlotVersion($('dualGyroVer').value, '体感版本号');
     const upstreamVersion = normalizeSlotVersion($('dualUpVer').value, '上游版本号');
+    if(state.managerBundle){
+      const choices={gyro:state.gyro.firmware,upstream:state.upstream.firmware,gyroVersion,upstreamVersion,upstreamSnapshot:state.upstreamSnap};
+      const prepared=await prepareBondFirstInstall(flasher,state.managerPackage,choices);
+      prepared.packageBytes=state.managerPackage;state.firstPrepared=prepared;state.firstBackup=null;$('dualFirstBackupFile').value='';
+      const name=`ds5-before-first-${prepared.chipId}-${stamp()}.ds5backup`;downloadBlob(name,prepared.backup);
+      say('已触发安装前备份下载。请确认文件已保存，再在下方选择它并核对安装。');return;
+    }
     const current = await flasher.readFlash(0, FLASH_SIZE, { label: '读取当前 4 MiB 用于备份', verify: true, base: 0.05, span: 0.34 });
-    const plan = await buildInstallImage({
+    const options = {
       snapshot: current, manager: state.manager,
       gyro: state.gyro.firmware, upstream: state.upstream.firmware,
       gyroVersion, upstreamVersion, upstreamSnapshot: state.upstreamSnap,
-    });
+    };
+    const plan = await buildInstallImage(options);
     if (!plan.segments.length) throw new Error('目标镜像与当前闪存完全一致，无需写入');
     const backupName = `ds5-stock-backup-${flasher.info?.chipId || 'bl616'}-${stamp()}.bin`;
     downloadBlob(backupName, current);
     log(`已保存安装前原始备份 ${backupName}，准备按安全顺序写入 ${plan.segments.length} 个变更区段`);
     await flasher.program(plan.segments, { reset: true, base: 0.4, span: 0.58 });
     say('双固件已写入并通过读回校验，原始 4 MiB 备份已保存到下载目录。请重新插拔 USB 验证启动。');
+  });
+
+  $('dualFirstCommit').onclick = () => withIsp(async flasher => {
+    const p=state.firstPrepared,choices=p?.options;
+    if(!p || p.packageBytes!==state.managerPackage || choices.gyro!==state.gyro?.firmware || choices.upstream!==state.upstream?.firmware ||
+       choices.upstreamSnapshot!==state.upstreamSnap || choices.gyroVersion!==normalizeSlotVersion($('dualGyroVer').value,'体感版本号') ||
+       choices.upstreamVersion!==normalizeSlotVersion($('dualUpVer').value,'上游版本号'))throw new Error('选择或版本已变化，请重新准备备份');
+    await confirmBondFirstInstall(flasher,p,state.firstBackup);state.firstPrepared=null;
+    say('双固件与配对同步管理器已写入并校验，请重新插拔接收器。');
   });
 
   $('dualRestoreRun').onclick = () => withIsp(async flasher => {

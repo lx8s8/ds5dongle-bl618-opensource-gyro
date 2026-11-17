@@ -11,9 +11,9 @@ cd "$SCRIPT_DIR"
 BOARD_TYPE="${BOARD_TYPE:-lctech616}"
 
 # ── USB 速度 ──
-#   fs  — Full-Speed 12Mbps（默认，线材兼容性好）
-#   hs  — High-Speed 480Mbps（高轮询率，线材兼容性较差）
-USB_SPEED="${USB_SPEED:-fs}"
+#   fs  — Full-Speed 12Mbps（线材兼容性好）
+#   hs  — High-Speed 480Mbps（默认，线材兼容性较差）
+USB_SPEED="${USB_SPEED:-hs}"
 case "$USB_SPEED" in
     fs|hs) ;;
     *) echo "ERROR: USB_SPEED must be fs or hs" >&2; exit 1 ;;
@@ -326,12 +326,12 @@ case "$ACTION" in
         echo "Board types:  lctech616 (默认) | aim61 | m0sdock"
         echo ""
         echo "USB speed:"
-        echo "  fs  — Full-Speed 12Mbps（默认，线材兼容性好）"
-        echo "  hs  — High-Speed 480Mbps（高轮询率，线材兼容性较差）"
+        echo "  fs  — Full-Speed 12Mbps（线材兼容性好）"
+        echo "  hs  — High-Speed 480Mbps（默认，线材兼容性较差）"
         echo ""
         echo "Examples:"
-        echo "  ./build_macos.sh rebuild                                # FS .bin (默认)"
-        echo "  USB_SPEED=hs ./build_macos.sh rebuild                   # HS .bin"
+        echo "  ./build_macos.sh rebuild                                # HS .bin (默认)"
+        echo "  USB_SPEED=fs ./build_macos.sh rebuild                   # FS .bin"
         exit 1
         ;;
 esac

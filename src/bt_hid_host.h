@@ -165,6 +165,10 @@ uint8_t bt_hid_host_get_bonded_count(void);
  */
 uint8_t bt_hid_host_get_active_idx(void);
 
+/* Called from bt_task only. No link keys leave the receiver. */
+bool bt_hid_host_bond_address(uint8_t index, uint8_t out[6]);
+bool bt_hid_host_forget_address(const uint8_t address[6]);
+
 /**
  * Clear all BR/EDR bonding information and disconnect if connected.
  * After clearing, the device will need to be re-paired via inquiry scan.

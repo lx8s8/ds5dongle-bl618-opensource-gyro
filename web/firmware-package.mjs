@@ -98,7 +98,7 @@ export async function loadFirmwarePackage(zipBytes, { variant } = {}) {
     if (files.has(folder + base + '-hs.bin')) variants.push({ id: 'hs', label: '高速 HS', name: base + '-hs.bin' });
   }
   if (variant && variants.length && !variants.some(v => v.id === variant)) throw new Error('固件包内没有所选的 ' + String(variant).toUpperCase() + ' 变体');
-  const picked = (variant && variants.find(v => v.id === variant)) || variants.find(v => v.name === defaultFw) || { id: /-hs\.bin$/i.test(defaultFw) ? 'hs' : 'fs', label: /-hs\.bin$/i.test(defaultFw) ? '高速 HS' : '全速 FS', name: defaultFw };
+  const picked = (variant && variants.find(v => v.id === variant)) || variants.find(v => v.id === 'hs') || variants.find(v => v.name === defaultFw) || { id: /-hs\.bin$/i.test(defaultFw) ? 'hs' : 'fs', label: /-hs\.bin$/i.test(defaultFw) ? '高速 HS' : '全速 FS', name: defaultFw };
   const firmwareName = picked.name;
   if (parseInt(cfg.boot2.address, 16) !== BOOT2_ADDRESS || parseInt(cfg.partition.address, 16) !== PARTITION_ADDRESS)
     throw new Error('固件包的 Boot2 / 分区表地址与本工具支持的 4 MiB 布局不一致');

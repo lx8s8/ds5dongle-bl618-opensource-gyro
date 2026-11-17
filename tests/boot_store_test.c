@@ -36,8 +36,15 @@ int main(void){
  memset(original,0xA5,sizeof original);memset(original+BM_RECORD0,255,8192);make_table(original+0xE000,0);memset(original+0xF000,255,4096);
  bm_record r=sample(),out;uint8_t encoded[256];bm_encode(&r,encoded);assert(bm_decode(encoded,&out));memcpy(original+BM_RECORD0,encoded,256);
  for(int i=0;i<256;i++){encoded[i]^=1;assert(!bm_decode(encoded,&out));encoded[i]^=1;}
- reset();assert(bm_load(&flash,&out)==0&&out.selected==0);assert(bm_select(&flash,0,&out)&&operation==0);
- assert(bm_select(&flash,1,&out)&&out.selected==1&&out.generation==2);assert(bm_partition_select(&flash,1));check_view(1);protected_unchanged();
+ reset();uint8_t active=255;assert(bm_partition_active(&flash,&active)&&active==0);
+ assert(bm_partition_range_free(&flash,0x342000,0x4000));
+ assert(!bm_partition_range_free(&flash,0x33e000,0x5000));
+ assert(!bm_partition_range_free(&flash,0x340000,0x1000));
+ assert(!bm_partition_range_free(&flash,0x3ff000,0x2000));
+ assert(!bm_partition_range_free(&flash,0x342000,0));assert(bm_load(&flash,&out)==0&&out.selected==0);assert(bm_select(&flash,0,&out)&&operation==0);
+ assert(bm_select(&flash,1,&out)&&out.selected==1&&out.generation==2);
+ /* Metadata alone is a request, not proof that the other slot ran. */
+ assert(bm_partition_active(&flash,&active)&&active==0);assert(bm_partition_select(&flash,1));check_view(1);assert(bm_partition_active(&flash,&active)&&active==1);protected_unchanged();
  assert(bm_select(&flash,0,&out)&&bm_partition_select(&flash,0));check_view(0);protected_unchanged();
  assert(bm_request_manager(&flash,true,&out)&&out.manage==1&&out.selected==0);
  assert(bm_request_manager(&flash,false,&out)&&out.manage==0);protected_unchanged();
@@ -54,11 +61,23 @@ int main(void){
  const int pt_lengths[]={4096,16+7*36,4};
  for(int op=0;op<3;op++)for(int cut=0;cut<=pt_lengths[op];cut++){
   reset();assert(bm_select(&flash,1,&out));operation=0;fail_operation=op;partial=cut;(void)bm_partition_select(&flash,1);fail_operation=-1;
-  assert(bm_load(&flash,&out)>=0&&out.selected==1);assert(bm_partition_select(&flash,1));check_view(1);protected_unchanged();failures++;
+  assert(bm_load(&flash,&out)>=0&&out.selected==1);assert(bm_partition_active(&flash,&active)&&active<=1);assert(bm_partition_select(&flash,1));check_view(1);protected_unchanged();failures++;
  }
  reset();assert(!bm_select(&flash,2,&out));assert(!bm_partition_select(&flash,2));assert(operation==0);
+ /* Equal-age valid but divergent copies cannot establish an authority. */
+ memcpy(memory+0xF000,memory+0xE000,4096);memory[0xF000+16+36+2]=1;
+ p32(memory+0xF000+16+7*36,bm_crc32(memory+0xF000+16,7*36));
+ assert(!bm_partition_active(&flash,&active)&&operation==0);
+ reset();
+ /* Even an otherwise unassigned factory extent blocks an extension overlap. */
+ p32(memory+0xE000+16+6*36+12,0x342000);p32(memory+0xE000+16+7*36,bm_crc32(memory+0xE000+16,7*36));
+ assert(!bm_partition_range_free(&flash,0x342000,0x4000));
+ reset();
+ /* A valid table with inconsistent active banks is unsafe as a sync source. */
+ memory[0xE000+16+36+2]=1;p32(memory+0xE000+16+7*36,bm_crc32(memory+0xE000+16,7*36));assert(!bm_partition_active(&flash,&active));
+ reset();
  /* Existing single-firmware layout is not silently migrated by boot code. */
- memory[0xE000+16+36+24]^=1;p32(memory+0xE000+16+7*36,bm_crc32(memory+0xE000+16,7*36));assert(!bm_partition_select(&flash,1)&&operation==0);
+ memory[0xE000+16+36+24]^=1;p32(memory+0xE000+16+7*36,bm_crc32(memory+0xE000+16,7*36));assert(!bm_partition_select(&flash,1)&&!bm_partition_active(&flash,&active)&&operation==0);
  reset();memset(memory+BM_RECORD0,255,8192);assert(bm_load(&flash,&out)<0&&!bm_select(&flash,1,&out));
  reset();r.generation=~0u;bm_encode(&r,memory+BM_RECORD0);assert(!bm_select(&flash,1,&out));
  bm_gesture g={0};assert(bm_button(&g,false,1999)==BM_WAIT);assert(bm_button(&g,false,2000)==BM_BOOT_CURRENT);

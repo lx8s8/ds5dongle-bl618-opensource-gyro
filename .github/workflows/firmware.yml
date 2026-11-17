@@ -98,6 +98,25 @@ jobs:
       - name: Compile experimental independent boot manager
         if: matrix.board == 'lctech616' && matrix.usb == 'fs'
         run: bash scripts/build_boot_manager.sh
+      - name: Set up Node for pairing manager packaging
+        if: matrix.board == 'lctech616' && matrix.usb == 'fs'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - name: Test pairing synchronization and interrupted writes
+        if: matrix.board == 'lctech616' && matrix.usb == 'fs'
+        run: bash experimental/bond_sync/run_tests.sh
+      - name: Build guarded pairing manager for validation
+        if: matrix.board == 'lctech616' && matrix.usb == 'fs'
+        run: bash experimental/bond_sync/build_guarded_manager.sh "$RUNNER_TEMP/ds5-bond-guarded"
+      - name: Upload guarded pairing manager for validation
+        if: matrix.board == 'lctech616' && matrix.usb == 'fs'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: boot-manager-pairing-validation
+          path: ${{ runner.temp }}/ds5-bond-guarded/bond-sync-experimental.bin
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload experimental boot manager
         if: matrix.board == 'lctech616' && matrix.usb == 'fs'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -123,6 +142,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Reject private-test manager USB identity
+        run: python3 scripts/check_manager_release_identity.py
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: firmware-*
@@ -133,6 +154,11 @@ jobs:
         with:
           name: boot-manager-experimental
           path: dist
+      - name: Download guarded pairing manager
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: boot-manager-pairing-validation
+          path: dist/bond-manager
       - name: Download control center packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -148,6 +174,8 @@ jobs:
           set -euo pipefail
           test "$(find dist -maxdepth 1 -name 'ds5dongle-*.zip' | wc -l)" -eq 6
           test -s dist/ds5-boot-manager-lctech616-fs-experimental.bin
+          test -s dist/bond-manager/bond-sync-experimental.bin
+          cp dist/bond-manager/bond-sync-experimental.bin dist/ds5-boot-manager-lctech616-fs-bondsync.bin
           for package in \
             DS5-Control-Center-windows-amd64.zip \
             DS5-Control-Center-macos-arm64.zip \

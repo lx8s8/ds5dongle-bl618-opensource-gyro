@@ -7,6 +7,7 @@
 #include "tinycrypt/sha256.h"
 #include "bflb_irq.h"
 #include "bflb_l1c.h"
+#include "bl616_glb.h"
 #include <string.h>
 
 static int read_flash(void*c,uint32_t a,uint8_t*p,size_t n){(void)c;return bflb_flash_read(a,p,n);}
@@ -17,6 +18,12 @@ static bm_record record;
 static uint8_t valid_images;
 /* Flash reads bypass write-back D-Cache. */
 static uint8_t sha_buf[2048] __attribute__((section(".noncacheable"),aligned(32)));
+
+#ifdef DS5_BOND_SYNC_EXPERIMENTAL
+#include "manager_bridge.inc"
+#else
+static bool select_target(uint8_t slot){return bm_select(&flash,slot,&record)&&bm_partition_select(&flash,slot);}
+#endif
 
 static bool image_ok(const bm_image*im){
  if(read_flash(NULL,im->address,sha_buf,256)||memcmp(sha_buf,"BFNP",4))return false;
@@ -33,7 +40,7 @@ static bool image_ok(const bm_image*im){
  return !memcmp(sha_digest,im->sha256,32);
 }
 static bool boot(uint8_t slot,bool usb){
- if(!(valid_images&(1u<<slot))||!bm_select(&flash,slot,&record)||!bm_partition_select(&flash,slot))return false;
+ if(!(valid_images&(1u<<slot))||!select_target(slot))return false;
  if(usb){bflb_mtimer_delay_ms(100);bm_usb_stop();bflb_mtimer_delay_ms(20);}
  /* The SDK handoff cleans and invalidates caches after switching the XIP
   * mapping. Keep them enabled until that RAM-resident handoff executes. */
@@ -54,9 +61,15 @@ int main(void){
  bool installed=bm_load(&flash,&record)>=0;
  bool requested=installed&&record.manage;
  if(requested)(void)bm_request_manager(&flash,false,&record);
+ /* Offer the management interface during the existing button window. A host
+  * with an existing WebHID grant can request a hold after an upstream reset;
+  * without that request normal startup still proceeds automatically. */
+ bm_usb_start();publish(installed,0,0,0);
  bm_gesture gesture={0};uint64_t start=bflb_mtimer_get_time_us();
  int selected=-1;
  while(installed&&!requested){
+  uint8_t command[63];
+  if(bm_usb_command(command) && command[0]==2){publish(installed,2,0,command[1]);break;}
   uint32_t ms=(bflb_mtimer_get_time_us()-start)/1000;
   if((ms/150)&1)bflb_gpio_set(gpio,GPIO_PIN_27);else bflb_gpio_reset(gpio,GPIO_PIN_27);
   bm_gesture_result next=bm_button(&gesture,bflb_gpio_read(gpio,GPIO_PIN_2)!=0,ms);
@@ -65,19 +78,22 @@ int main(void){
  }
  /* Capture BOOT gestures before hashing large images. In management mode,
   * enumerate immediately; no slot is offered until validation completes. */
- if(selected<0){bm_usb_start();publish(installed,0,0,0);}
  if(installed)for(int i=0;i<2;i++)if(image_ok(&record.image[i]))valid_images|=1u<<i;
- if(selected>=0){if(boot((uint8_t)selected,false))for(;;){} bm_usb_start();}
+ if(selected>=0){if(boot((uint8_t)selected,true))for(;;){}}
  publish(installed,0,0,0);
  for(;;){
   uint8_t command[63];
   if(bm_usb_command(command)){
    uint8_t result=1,slot=command[2];
    if(command[0]==1&&slot<2&&installed&&(valid_images&(1u<<slot))){
-    if(bm_select(&flash,slot,&record)&&bm_partition_select(&flash,slot))result=0;
+    if(select_target(slot))result=0;
    }
    publish(installed,command[0],result,command[1]);
-   if(!result)boot(slot,true);
+   /* A direct jump from the live USB manager can leave the application
+    * without USB/BT on some receivers. Commit and acknowledge first, then
+    * reset the SoC so ROM and the normal manager startup establish clean
+    * hardware state. A reset before this point leaves the old view usable. */
+   if(!result){bflb_mtimer_delay_ms(500);bm_usb_stop();bflb_mtimer_delay_ms(100);GLB_SW_System_Reset();}
   }
   uint32_t ms=(bflb_mtimer_get_time_us()-start)/1000;
   if((ms/500)&1)bflb_gpio_set(gpio,GPIO_PIN_27);else bflb_gpio_reset(gpio,GPIO_PIN_27);

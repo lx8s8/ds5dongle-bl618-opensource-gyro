@@ -21,13 +21,13 @@ SDK 的固件后处理工具为 x86_64 程序，这台 Mac 已能运行；其他
 在项目目录执行：
 
 ```sh
-bash scripts/build_local.sh build     # 默认 LCTech616 / FS，增量编译
+bash scripts/build_local.sh build     # 默认 LCTech616 / HS，增量编译
 bash scripts/build_local.sh package   # 先增量编译，再生成 dist/ 刷机 ZIP
 bash scripts/build_local.sh rebuild   # 清理后完整编译
 bash scripts/build_local.sh check     # 主机检查；另需 PATH 中可用的 Node.js
 ```
 
-`BOARD_TYPE=aim61`、`BOARD_TYPE=m0sdock` 和 `USB_SPEED=hs` 可切换构建目标；`BUILD_JOBS` 控制并行度。切换板型、USB 速度、SDK、编译器或构建配置时重新配置构建。普通 C 源码和头文件修改通过 CMake 依赖关系增量重编，不使用 `strip` 清除中间文件。
+`BOARD_TYPE=aim61`、`BOARD_TYPE=m0sdock` 和 `USB_SPEED=fs` 可切换构建目标；`BUILD_JOBS` 控制并行度。切换板型、USB 速度、SDK、编译器或构建配置时重新配置构建。普通 C 源码和头文件修改通过 CMake 依赖关系增量重编，不使用 `strip` 清除中间文件。
 
 主固件位于 `firmware/lctech616/ds5dongle-lctech616.bin`。完整刷机包位于 `dist/`，包含网页、文档、分区、Boot2 和校验和。未提交的源码构建会在 ZIP 名称中加 `-dirty`，并在 `build-info.json` 标明；编译产生的便利刷机配置不计入源码修改。包内记录实际编译器对应的工具链归档，未知自定义编译器的归档字段留空。
 

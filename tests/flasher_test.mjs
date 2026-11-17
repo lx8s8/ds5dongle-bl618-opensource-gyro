@@ -79,7 +79,8 @@ function packageZip({ tamper } = {}) {
     ['up/ds5dongle-lctech616.bin', upstreamFs],
     ['up/ds5dongle-lctech616-hs.bin', upstreamHs],
   ]);
-  const ufs = await loadFirmwarePackage(upstreamZip);
+  const ufs = await loadFirmwarePackage(upstreamZip, { variant: 'fs' });
+  assert.equal((await loadFirmwarePackage(upstreamZip)).variant, 'hs');
   assert.equal(ufs.integrity, 'none');
   assert.equal(ufs.variant, 'fs');
   assert.deepEqual(ufs.variants.map(v => v.id), ['fs', 'hs']);

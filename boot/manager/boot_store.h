@@ -40,6 +40,10 @@ bool bm_request_manager(const bm_flash *,bool,bm_record *);
 /* Publish FW and all writable partition views in ONE CRC-protected table.
  * Root manager is entered by ROM, independently of this application table. */
 bool bm_partition_select(const bm_flash *,uint8_t);
+/* Read the validated partition view; fail when its active banks disagree. */
+bool bm_partition_active(const bm_flash *,uint8_t *);
+/* False for invalid layouts, overflow, or overlap with any declared extent. */
+bool bm_partition_range_free(const bm_flash *,uint32_t,uint32_t);
 
 typedef enum { BM_WAIT,BM_BOOT_CURRENT,BM_BOOT_OTHER,BM_MANAGE } bm_gesture_result;
 typedef struct {uint32_t pressed_at;bool down;} bm_gesture;

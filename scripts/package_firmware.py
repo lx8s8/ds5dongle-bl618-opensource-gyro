@@ -157,7 +157,7 @@ def build_package(root, board, usb, sdk_root, output):
         (package / "刷机说明.txt").write_text(
             f"DS5Dongle 陀螺仪固件：{board} / USB {usb.upper()}\n"
             f"源码提交：{commit}\n\n"
-            "请确认板型匹配。FS 为默认兼容版本，HS 对 USB 线材要求更高。\n"
+            "请确认板型匹配。HS 为默认高速版本；如 USB 不稳定，可选择 FS 兼容版本。\n"
             "这是自动编译产物，未经过真实手柄和开发板测试。\n\n"
             "Bouffalo Lab Dev Cube：选择 BL616、MCU 模式；进入板子的串口下载模式。\n"
             "分区表选择 partition_cfg_4M_nosec.toml（FW 不加密），\n"

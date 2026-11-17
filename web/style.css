@@ -1698,7 +1698,10 @@ footer {
 .release-list {
   display: grid;
   gap: 12px;
-  margin-bottom: 16px;
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
 }
 
 .release-card {
@@ -1714,6 +1717,15 @@ footer {
   color: var(--muted);
   font-size: 12.5px;
   white-space: pre-wrap;
+}
+
+.release-notes-details {
+  margin: 10px 0;
+}
+
+.release-notes-details > summary {
+  color: var(--muted);
+  font-size: 12.5px;
 }
 
 .web-steps {

@@ -8,6 +8,7 @@ import {initBootManager} from './boot-manager.mjs';
 import {initDualFirmware} from './dual-ui.mjs';
 import { initReleases } from './releases.mjs';
 import { initFlasher } from './flash-ui.mjs';
+import { initPairingUI } from './pairing-ui.mjs';
 import { mouseSpeed, stickPosition } from './mapping-model.mjs';
 import { initMouseTest } from './mouse-test.mjs?v=20261114-mouse2';
 import { DiagnosticCapture } from './diagnostic-capture.mjs';
@@ -745,6 +746,7 @@ function refreshConfiguration(event){
 }
 macroUI=initMacroUI({transport:()=>transport,action,message,download,getLive:()=>live});
 receiverUI=initReceiverUI({transport:()=>transport,action,message,download});
+initPairingUI({transport:()=>transport,action,message});
 tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.sendReport(2,p)),message,onRender:frame=>{if(device?.opened)capture.frame(frame);},getStickConfig:()=>reportedProfiles[activeSlot]||defaults()});
 const flasher=initFlasher();
 const dualUI=initDualFirmware();

@@ -6,6 +6,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#ifdef DS5_PAIRING_CONTROL
+#include "pairing_control.h"
+#endif
 
 static uint8_t cfg_report[2][63], remap_report[2][127];
 static volatile uint8_t published;
@@ -26,6 +29,9 @@ void dongle_control_publish(void)
     memcpy(cfg_report[next], config_get(), sizeof(struct config_body));
     cfg_report[next][40] = last_command; cfg_report[next][41] = last_result;
     cfg_report[next][42] = last_sequence; cfg_report[next][43] = last_report;
+#ifdef DS5_PAIRING_CONTROL
+    pairing_control_snapshot(cfg_report[next] + 44);
+#endif
     remap_report[next][0] = remap_get_active_profile(); remap_report[next][1] = read_profile;
     memcpy(remap_report[next] + 2, remap_get_profile_table(read_profile), REMAP_BTN_COUNT * sizeof(remap_entry_t));
     __asm volatile("" ::: "memory"); published = next;
@@ -62,6 +68,10 @@ uint8_t dongle_control_command(uint8_t rid, const uint8_t *p, uint16_t len)
         } else if (p[0] == 5) {
             last_result = 0;
             effects = DONGLE_RESET;
+#ifdef DS5_PAIRING_CONTROL
+        } else if (p[0] >= 6 && p[0] <= 8 && len == 63) {
+            last_result = pairing_control_submit(p[0], p[62], p + 1) ? 0 : 1;
+#endif
         }
     } else if (rid == 0xFB) {
         uint8_t profile = len >= 2 ? p[1] : remap_get_active_profile();

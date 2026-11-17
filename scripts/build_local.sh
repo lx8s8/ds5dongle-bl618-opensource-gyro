@@ -29,7 +29,7 @@ case "${1:-build}" in
     rebuild|clean) exec bash build_macos.sh "$1" ;;
     package)
         bash build_macos.sh incremental
-        exec python3 scripts/package_firmware.py --board "${BOARD_TYPE:-lctech616}" --usb "${USB_SPEED:-fs}"
+        exec python3 scripts/package_firmware.py --board "${BOARD_TYPE:-lctech616}" --usb "${USB_SPEED:-hs}"
         ;;
     check)
         if ! command -v node >/dev/null 2>&1; then

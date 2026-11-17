@@ -27,6 +27,7 @@ jobs:
           node tests/web_protocol_test.mjs
           node tests/control_center_test.mjs
           node tests/boot_manager_test.mjs
+          node tests/pairing_ui_test.mjs
           node tests/macros_test.mjs
           node tests/flasher_test.mjs
           node tests/updates_test.mjs

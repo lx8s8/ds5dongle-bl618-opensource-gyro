@@ -12,6 +12,7 @@ find_package(bouffalo_sdk REQUIRED HINTS $ENV{BL_SDK_BASE})
 # Incoming Bluetooth HCI/L2CAP reports must preempt audio encoding.
 sdk_add_compile_definitions(-DCONFIG_BT_RX_PRIO=5)
 sdk_add_compile_definitions(-DDS5_BOOT_MANAGER_CLIENT=1)
+sdk_add_compile_definitions(-DDS5_PAIRING_CONTROL=1)
 
 sdk_set_main_file(src/main.c)
 
@@ -36,6 +37,7 @@ target_sources(app PRIVATE
     src/hid_mix.c
     src/link_diag.c
     src/dongle_control.c
+    src/pairing_control.c
     src/boot_manager_client.c
     boot/manager/boot_store.c
 )

@@ -2109,6 +2109,37 @@ uint8_t bt_hid_host_get_active_idx(void)
     return active_idx;
 }
 
+bool bt_hid_host_bond_address(uint8_t index, uint8_t out[6])
+{
+    if (!out || index >= bonded_count) return false;
+    memcpy(out, bonded_list[index].val, 6);
+    return true;
+}
+
+bool bt_hid_host_forget_address(const uint8_t address[6])
+{
+    if (!address || hid_ctx.conn || hid_ctx.state != BT_HID_STATE_IDLE) return false;
+    bt_addr_t addr;
+    memcpy(addr.val, address, sizeof(addr.val));
+    if (bonded_list_find_addr(&addr) < 0) return false;
+    /* Refuse unknown storage formats before touching a user's bonds. */
+    /* Read one byte beyond the known layout so longer, incompatible records
+     * cannot be mistaken for our 196-byte format. */
+    uint8_t record[197]; size_t len = 0;
+    if (bt_settings_get_bin("link_key", record, sizeof record, &len) || len != 196 ||
+        record[194] != 0xa6 || record[195] != 0xa5) return false;
+    extern void bt_keys_link_key_clear_addr(const bt_addr_t *addr);
+    bt_keys_link_key_clear_addr(&addr);
+    len = 0;
+    if (bt_settings_get_bin("link_key", record, sizeof record, &len) || len != 196 ||
+        record[194] != 0xa6 || record[195] != 0xa5) return false;
+    for (int i = 0; i < 8; i++)
+        if (record[184 + i] && !memcmp(record + i * 23, address, 6)) return false;
+    bonded_list_load();
+    bonded_list_persist_idx();
+    return true;
+}
+
 void bt_hid_host_clear_bonds(void)
 {
     LOG_INF("[BT] Clearing all bonding info\n");

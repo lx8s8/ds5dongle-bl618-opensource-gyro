@@ -32,12 +32,49 @@ export async function requestBootManager(hid){
  if(candidate&&!match(candidate))throw new Error('请选择 DS5 Boot Manager，日常手柄接口不能用于切槽');
  return candidate;
 }
+export async function enterManagerFromUpstream(hid){
+ const filter={vendorId:0x054c,productId:0x0ce6,usagePage:1,usage:5};
+ const candidates=await hid.requestDevice({filters:[filter,{...filter,productId:0x0df2}]});
+ const receiver=candidates[0];
+ if(!receiver)throw new Error('未选择上游接收器');
+ if(!receiver.collections.some(c=>(c.featureReports||[]).some(r=>r.reportId===0xf6)))throw new Error('所选设备不支持接收器配置命令');
+ const openedHere=!receiver.opened;
+ try {
+  if(openedHere)await receiver.open();
+  const payload=new Uint8Array(63);payload[0]=3;
+  await receiver.sendFeatureReport(0xf6,payload);
+ } finally { if(openedHere&&receiver.opened)await receiver.close().catch(()=>{}); }
+ const until=performance.now()+5000;
+ while(performance.now()<until){
+  const devices=await hid.getDevices();
+  const managers=devices.filter(d=>d.vendorId===0x1209&&d.productId===1&&d.collections.some(c=>c.usagePage===0xff00&&(c.featureReports||[]).some(r=>r.reportId===0x70)));
+  if(managers.length===1){
+   const manager=managers[0];
+   try {
+    if(!manager.opened)await manager.open();
+    const p=new Uint8Array(63);p.set([2,1]);await manager.sendFeatureReport(0x70,p);
+    const ackUntil=performance.now()+1200;
+    while(performance.now()<ackUntil){
+     await new Promise(resolve=>setTimeout(resolve,20));
+     const view=await manager.receiveFeatureReport(0x70);
+     const status=decodeBootStatus(new Uint8Array(view.buffer,view.byteOffset,view.byteLength));
+     if(status.command===2&&status.sequence===1&&status.result===0){await manager.close();return;}
+    }
+    await manager.close();
+   }
+   catch {if(manager.opened)await manager.close().catch(()=>{});}
+  }
+  await new Promise(resolve=>setTimeout(resolve,50));
+ }
+ throw new Error('没有在启动窗口连接到已授权的启动管理器；请先手动进入并在此浏览器授权管理器，或检查管理器版本');
+}
 export function initBootManager({enterManager}){
  const $=id=>document.getElementById(id);let device,manager,busy=false,status;
  function controls(){
   $('bootConnect').disabled=busy||!!device||!navigator.hid;$('bootDisconnect').disabled=busy||!device;
   for(let i=0;i<2;i++)$('bootSlot'+i).disabled=busy||!device||!status?.installed||!(status.valid&(1<<i));
   $('bootEnter').disabled=busy||!!device;
+  $('bootEnterUpstream').disabled=busy||!!device||!navigator.hid;
  }
  function render(){
   $('bootState').textContent=status?status.installed?`默认：${status.selected===0?'体感固件':'上游原版'} · 两份镜像${status.valid===3?'均通过校验':'有缺失或校验失败'}`:'尚未安装有效双固件数据':'未连接启动管理器';
@@ -50,6 +87,7 @@ export function initBootManager({enterManager}){
  });
  $('bootDisconnect').onclick=()=>run(close);
  $('bootEnter').onclick=()=>run(async()=>{await enterManager();$('bootState').textContent='已请求重启进入管理器；设备重新枚举后点“连接启动管理器”。';});
+ $('bootEnterUpstream').onclick=()=>run(async()=>{await enterManagerFromUpstream(navigator.hid);$('bootState').textContent='已请求进入管理器；请点击“连接启动管理器”，再选择要启动的固件。';});
  for(let i=0;i<2;i++)$('bootSlot'+i).onclick=()=>run(async()=>{await manager.boot(i);await close();$('bootState').textContent='管理器已确认切换请求，请等待'+(i?'上游原版':'体感固件')+'重新枚举；回执不代表固件已成功启动。';});
  navigator.hid?.addEventListener('disconnect',e=>{if(e.device===device){device=manager=status=undefined;render();}});
  // Validation may still be running when the manager first enumerates.

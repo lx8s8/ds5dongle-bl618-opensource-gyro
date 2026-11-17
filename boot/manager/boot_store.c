@@ -53,22 +53,23 @@ enum { PT_SIZE=16+16*36+4,PT0=0xE000,PT1=0xF000 };
 static bool pt_valid(const uint8_t*p){uint16_t n=u16(p+6);return u32(p)==0x54504642u&&u16(p+4)==0&&n&&n<=16&&
  bm_crc32(p,12)==u32(p+12)&&bm_crc32(p+16,n*36)==u32(p+16+n*36);}
 static int entry(uint8_t*p,const char*name){int found=-1;for(int i=0;i<u16(p+6);i++)if(!strncmp((char*)p+16+i*36+3,name,9)){if(found>=0)return -1;found=i;}return found;}
-bool bm_partition_select(const bm_flash*f,uint8_t slot){
+static bool partition_view(const bm_flash*f,int slot,uint8_t *active){
  uint8_t tables[2][PT_SIZE],next[PT_SIZE],verify[PT_SIZE];
  bool valid[2];for(int i=0;i<2;i++)valid[i]=!f->read(f->context,i?PT1:PT0,tables[i],PT_SIZE)&&pt_valid(tables[i]);
- if(slot>1||(!valid[0]&&!valid[1]))return false;
+ if(slot>1||slot< -1||(!valid[0]&&!valid[1]))return false;
  if(valid[0]&&valid[1]&&u32(tables[0]+8)==u32(tables[1]+8)&&memcmp(tables[0],tables[1],16+u16(tables[0]+6)*36+4))return false;
  int old=valid[1]&&(!valid[0]||u32(tables[1]+8)>u32(tables[0]+8));memcpy(next,tables[old],PT_SIZE);
  const char*names[]={"FW","PSM","KEY","DATA","media"};
  const uint32_t addresses[5][2]={{0x10000,0x210000},{0x330000,0x3E9000},{0x338000,0x3F1000},{0x33A000,0x3F3000},{0x150000,0x378000}};
  const uint32_t lengths[5][2]={{0x140000,0x120000},{0x8000,0x8000},{0x2000,0x2000},{0x5000,0x5000},{0x71000,0x71000}};
  const uint8_t kinds[5]={0,3,4,5,2};
- bool changed=false;
+ bool changed=false;int current=-1;
  for(int k=0;k<5;k++){
   int i=entry(next,names[k]);if(i<0)return false;uint8_t*p=next+16+i*36;
   if(p[0]!=kinds[k]||p[1]||u32(p+12)!=addresses[k][0]||u32(p+16)!=addresses[k][1]||
      u32(p+20)!=lengths[k][0]||u32(p+24)!=lengths[k][1]||p[2]>1)return false;
-  if(p[2]!=slot){p[2]=slot;changed=true;}
+  if(current<0)current=p[2];else if(slot<0&&current!=p[2])return false;
+  if(slot>=0&&p[2]!=(uint8_t)slot){p[2]=(uint8_t)slot;changed=true;}
  }
  /* Reject all other nonzero extents intersecting either application or either
   * writable bank. Installation removes the legacy overlapping mfg entry. */
@@ -80,6 +81,7 @@ bool bm_partition_select(const bm_flash*f,uint8_t slot){
    for(int k=0;k<5;k++)for(int l=0;l<2;l++)if(a<addresses[k][l]+lengths[k][l]&&a+n>addresses[k][l])return false;
   }
  }
+ if(slot<0){if(!active)return false;*active=(uint8_t)current;return true;}
  if(!changed)return true;
  if(u32(next+8)==UINT32_MAX)return false;
  p32(next+8,u32(next+8)+1);p32(next+12,bm_crc32(next,12));size_t end=16+u16(next+6)*36;p32(next+end,bm_crc32(next+16,end-16));
@@ -88,6 +90,32 @@ bool bm_partition_select(const bm_flash*f,uint8_t slot){
     f->write(f->context,address+end,next+end,4)||f->read(f->context,address,verify,PT_SIZE)||
     memcmp(next,verify,end+4)||!pt_valid(verify))return false;
  return true;
+}
+bool bm_partition_select(const bm_flash*f,uint8_t slot){return partition_view(f,slot,NULL);}
+bool bm_partition_active(const bm_flash*f,uint8_t *slot){return partition_view(f,-1,slot);}
+/* An extension may only be installed/executed outside every declared extent.
+ * This checks the same newest valid table as the active-slot selection. */
+static __attribute__((noinline)) bool partition_range_free_checked(const bm_flash*f,uint32_t begin,uint32_t length){
+ uint8_t tables[2][PT_SIZE];bool valid[2];
+ for(int i=0;i<2;i++)valid[i]=!f->read(f->context,i?PT1:PT0,tables[i],PT_SIZE)&&pt_valid(tables[i]);
+ if(!valid[0]&&!valid[1])return false;
+ if(valid[0]&&valid[1]&&u32(tables[0]+8)==u32(tables[1]+8)&&memcmp(tables[0],tables[1],16+u16(tables[0]+6)*36+4))return false;
+ int old=valid[1]&&(!valid[0]||u32(tables[1]+8)>u32(tables[0]+8));const uint8_t*t=tables[old];
+ for(int i=0;i<u16(t+6);i++){const uint8_t*p=t+16+i*36;for(int j=0;j<2;j++){
+  uint32_t a=u32(p+12+j*4),n=u32(p+20+j*4);if(!n)continue;
+  if(a>0x400000u||n>0x400000u-a||(a<begin+length&&begin<a+n))return false;
+ }}
+ return true;
+}
+bool bm_partition_range_free(const bm_flash*f,uint32_t begin,uint32_t length){
+ uint8_t active;
+ if(!length||begin>0x400000u||length>0x400000u-begin||
+    (begin<BM_RECORD1+BM_SECTOR_SIZE&&begin+length>BM_RECORD0)||
+    (begin<PT1+BM_SECTOR_SIZE&&begin+length>PT0)||
+    !bm_partition_active(f,&active))return false;
+ /* Keep the large partition-validation and range-check frames separate: the
+  * BL616 startup stack is only 4 KiB. */
+ return partition_range_free_checked(f,begin,length);
 }
 bm_gesture_result bm_button(bm_gesture*s,bool pressed,uint32_t elapsed){
  if(pressed&&!s->down){s->down=true;s->pressed_at=elapsed;}

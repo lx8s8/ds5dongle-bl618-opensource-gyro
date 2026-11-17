@@ -12,6 +12,8 @@ check:
 	$(BIN)
 	$(CC) $(CFLAGS) -I../src macro_test.c ../src/macro_engine.c ../src/hid_mix.c -o /tmp/ds5-macro-tests
 	/tmp/ds5-macro-tests
+	$(CC) $(CFLAGS) -Ipairing_stubs -I../src pairing_control_test.c ../src/pairing_control.c -o /tmp/ds5-pairing-control-test
+	/tmp/ds5-pairing-control-test
 	$(CC) $(CFLAGS) -Istubs -I../src macro_runtime_test.c ../src/macro_runtime.c ../src/macro_engine.c ../src/gyro.c -lm -o /tmp/ds5-macro-runtime-tests
 	/tmp/ds5-macro-runtime-tests
 	$(CC) $(CFLAGS) -Istubs -I../src macro_storage_test.c ../src/macro_storage.c ../src/macro_engine.c -o /tmp/ds5-macro-storage-tests
@@ -29,7 +31,7 @@ check:
 	python3 check_usb_identity.py
 	python3 check_usb_input_atomicity.py
 	python3 check_bt_lifetime.py
-	@if command -v node >/dev/null 2>&1; then node web_protocol_test.mjs && node control_center_test.mjs && node diagnostic_capture_test.mjs && node boot_manager_test.mjs && node macros_test.mjs && node flasher_test.mjs && node updates_test.mjs && node dual_firmware_test.mjs && node ui_helpers_test.mjs; else echo "node unavailable: run web_protocol_test.mjs separately"; fi
+	@if command -v node >/dev/null 2>&1; then node web_protocol_test.mjs && node control_center_test.mjs && node diagnostic_capture_test.mjs && node boot_manager_test.mjs && node pairing_ui_test.mjs && node macros_test.mjs && node flasher_test.mjs && node updates_test.mjs && node dual_firmware_test.mjs && node ui_helpers_test.mjs; else echo "node unavailable: run web_protocol_test.mjs separately"; fi
 
 sanitize:
 	UBSAN_OPTIONS=halt_on_error=1 $(MAKE) check CFLAGS="$(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer"

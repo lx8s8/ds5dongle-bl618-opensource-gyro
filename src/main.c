@@ -55,6 +55,7 @@
 
 static QueueHandle_t input_queue;
 static QueueHandle_t output_queue;
+#include "pairing_control.h"
 static volatile bool ds5_connected = false;
 static volatile bool ever_connected = false;
 static volatile bool battery_low = false;
@@ -369,7 +370,7 @@ static void on_hid_state(enum bt_hid_host_state state)
         usb_fwd_count = 0;
         first_input_logged = false;
         usb_wake_on_bt_disconnect();
-        if (was_connected && !bt_hid_host_is_switching() &&
+        if (was_connected && !pairing_control_keep_usb() && !bt_hid_host_is_switching() &&
             !usb_wake_host_suspended()) {
             usb_deferred_disc_us = bflb_mtimer_get_time_us();
             LOG_INF("[MAIN] USB disconnect deferred (10s timer started)\n");
@@ -614,6 +615,8 @@ static void bt_task(void *arg)
 
     for (;;) {
         audio_check_respawn();
+        pairing_control_poll();
+        if (pairing_control_keep_usb()) usb_deferred_disc_us = 0;
 
         loop_count++;
         if ((loop_count % 50) == 1) {
@@ -1457,7 +1460,7 @@ int main(void)
      * The 10-deep app_tx_fifo in bt_hid_host.c provides the actual buffering
      * and CAN_SEND_NOW flow control (one BT packet in-flight at a time). */
     output_queue = xQueueCreate(5, USB_OUTPUT_BUF_SZ);
-    if (!input_queue || !output_queue) {
+    if (!input_queue || !output_queue || !pairing_control_init()) {
         LOG_ERR("[B] queue alloc FAIL\n");
         while (1) {}
     }
