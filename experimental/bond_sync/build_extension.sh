@@ -17,7 +17,7 @@ mkdir -p "$out"
 cc="$tools/riscv64-unknown-elf-gcc"
 objcopy="$tools/riscv64-unknown-elf-objcopy"
 size="$tools/riscv64-unknown-elf-size"
-common=(-march=rv32imafcpzpsfoperand_xtheade -mabi=ilp32f -mtune=e907 -Os -fshort-enums -ffreestanding -fno-builtin -fno-common -ffunction-sections -fdata-sections -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -DLFS_NO_MALLOC -I "$lfs" -I "$root/experimental/bond_sync")
+common=(-march=rv32imafcpzpsfoperand_xtheade -mabi=ilp32f -mtune=e907 -Os -flto -fshort-enums -ffreestanding -fno-builtin -fno-common -ffunction-sections -fdata-sections -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -DLFS_NO_MALLOC -I "$lfs" -I "$root/experimental/bond_sync")
 link_guard=()
 if [[ -n "${BOND_GUARD_CALL_ADDR:-}" && -n "${BOND_ASSERT_FAIL_ADDR:-}" ]]; then
   common+=(-DBOND_ENABLE_ASSERT_GUARD -include "$root/experimental/bond_sync/extension/lfs_assert_override.h")
@@ -27,7 +27,7 @@ elif [[ -n "${BOND_GUARD_CALL_ADDR:-}" || -n "${BOND_ASSERT_FAIL_ADDR:-}" ]]; th
 else
   common+=(-DLFS_NO_ASSERT)
 fi
-"$cc" "${common[@]}" "${link_guard[@]}" -nostdlib -Wl,--gc-sections -Wl,-T,"$root/experimental/bond_sync/extension/link.ld" \
+"$cc" "${common[@]}" "${link_guard[@]}" -nostdlib -Wl,--gc-sections -Wl,-u,memcpy,-u,memset -Wl,-T,"$root/experimental/bond_sync/extension/link.ld" \
   "$root/experimental/bond_sync/extension/extension.c" "$root/experimental/bond_sync/extension/libc.c" \
   "$root/experimental/bond_sync/bond_sync.c" "$lfs/lfs.c" "$lfs/lfs_util.c" -lgcc -o "$out/extension.elf"
 "$size" "$out/extension.elf"
