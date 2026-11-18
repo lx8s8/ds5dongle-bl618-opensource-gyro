@@ -68,7 +68,7 @@ export async function enterManagerFromUpstream(hid){
  }
  throw new Error('没有在启动窗口连接到已授权的启动管理器；请先手动进入并在此浏览器授权管理器，或检查管理器版本');
 }
-export function initBootManager({enterManager}){
+export function initBootManager({enterManager,onManagerActivity=()=>{}}){
  const $=id=>document.getElementById(id);let device,manager,busy=false,status;
  function controls(){
   $('bootConnect').disabled=busy||!!device||!navigator.hid;$('bootDisconnect').disabled=busy||!device;
@@ -83,12 +83,12 @@ export function initBootManager({enterManager}){
  async function close(){if(device?.opened)await device.close();device=manager=status=undefined;render();}
  async function run(fn){if(busy)return;busy=true;controls();try{await fn();}catch(e){$('bootState').textContent=e.message||String(e);}finally{busy=false;controls();}}
  $('bootConnect').onclick=()=>run(async()=>{let candidate;try{candidate=await requestBootManager(navigator.hid);}catch(e){if(e.name==='NotFoundError')throw new Error('未选择或未找到启动管理器设备：若当前运行日常手柄固件，请先点“从体感固件进入管理器”（或上电快闪窗口内按住 BOOT 约 1 秒），等待进入管理器后再点此连接。');throw e;}if(!candidate)throw new Error('未选择启动管理器。请先进入管理器，待设备重新枚举后再连接；按住 BOOT 插入 USB 进入的是烧录模式。');await candidate.open();
-  try{const m=new BootManager(candidate),s=await m.read();device=candidate;manager=m;status=s;render();}catch(e){await candidate.close();throw e;}
+  try{const m=new BootManager(candidate),s=await m.read();device=candidate;manager=m;status=s;render();onManagerActivity('connected');}catch(e){await candidate.close();throw e;}
  });
  $('bootDisconnect').onclick=()=>run(close);
- $('bootEnter').onclick=()=>run(async()=>{await enterManager();$('bootState').textContent='已请求重启进入管理器；设备重新枚举后点“连接启动管理器”。';});
- $('bootEnterUpstream').onclick=()=>run(async()=>{await enterManagerFromUpstream(navigator.hid);$('bootState').textContent='已请求进入管理器；请点击“连接启动管理器”，再选择要启动的固件。';});
- for(let i=0;i<2;i++)$('bootSlot'+i).onclick=()=>run(async()=>{await manager.boot(i);await close();$('bootState').textContent='管理器已确认切换请求，请等待'+(i?'上游原版':'体感固件')+'重新枚举；回执不代表固件已成功启动。';});
+ $('bootEnter').onclick=()=>run(async()=>{await enterManager();$('bootState').textContent='已请求重启进入管理器；设备重新枚举后点“连接启动管理器”。';onManagerActivity('entering');});
+ $('bootEnterUpstream').onclick=()=>run(async()=>{await enterManagerFromUpstream(navigator.hid);$('bootState').textContent='已请求进入管理器；请点击“连接启动管理器”，再选择要启动的固件。';onManagerActivity('entering');});
+ for(let i=0;i<2;i++)$('bootSlot'+i).onclick=()=>run(async()=>{await manager.boot(i);await close();$('bootState').textContent='管理器已确认切换请求，请等待'+(i?'上游原版':'体感固件')+'重新枚举；回执不代表固件已成功启动。';onManagerActivity(i?'upstream':'gyro');});
  navigator.hid?.addEventListener('disconnect',e=>{if(e.device===device){device=manager=status=undefined;render();}});
  // Validation may still be running when the manager first enumerates.
  setInterval(()=>{if(!device||busy)return;run(async()=>{status=await manager.read();render();});},1000);

@@ -78,7 +78,7 @@ async function waitFor(predicate) { const deadline = performance.now() + 120000;
 const ready = () => waitFor(() => !$('apply').disabled);
 try {
   await import('../web/app.js');
-  check($('apply').disabled && $('connect').textContent === '连接接收器', 'initial state');
+  check($('apply').disabled && $('connect').textContent === '连接体感配置', 'initial state');
   check(document.querySelector('h1').textContent === 'DS5 控制中心', 'concise product title');
   check($('editSlot').options.length === 4 && $('profiles').hidden, 'four independent slots');
   check($('bootSlot0').disabled&&$('bootSlot1').disabled&&$('bootState').textContent.includes('未连接'),'unconnected boot manager cannot switch applications');
@@ -189,7 +189,8 @@ try {
   hid.requestDevice=async({filters})=>filters.some(f=>f.usagePage===0xFF00)?[bootFake]:[];
   $('bootConnect').click();await waitFor(()=>!$('bootSlot1').disabled);
   check($('bootVersion0').textContent==='G2.4'&&$('bootVersion1').textContent==='3.24H','boot manager renders both application versions');
-  $('bootSlot1').click();await waitFor(()=>!bootOpened&&$('bootState').textContent.includes('切换回执成功'));
+  $('bootSlot1').click();await waitFor(()=>!bootOpened&&$('bootState').textContent.includes('管理器已确认切换请求'));
+  check($('message').textContent.includes('上游固件')&&!$('message').classList.contains('error'),'manager activity replaces stale connection errors');
   check(bootSelected===1&&$('bootSlot0').disabled&&fake.opened,'boot manager switches only its own simulated interface');
   hid.requestDevice=oldPicker;
   // Auto-download Boot Manager, Gyro and Upstream firmware inside Dual Tools
@@ -292,6 +293,7 @@ try {
   try {
     $('dualToolsDetails').open = true;
     change('dualOp', 'install');
+    change('dualInstallUsb', 'fs');
     $('dualAutoAll').click();
     await waitFor(() => !$('dualAutoAll').disabled && $('dualMessage').textContent.includes('全套文件已下载'));
     check($('dualMgrSummary').textContent.includes('SHA256 验证通过'), 'dual auto-download populates and validates Boot Manager');
@@ -313,6 +315,8 @@ try {
   } finally { window.fetch = origFetch; }
   location.hash='#tester';await waitFor(()=>!$('tester').hidden);
   $('disconnect').click(); await waitFor(() => !fake.opened && !$('connect').disabled); check($('apply').disabled && $('firmware').textContent === '未连接', 'disconnect state');
+  change('dualOp','install');$('dualInstallConfirm').checked=true;$('dualInstallConfirm').dispatchEvent(new Event('change',{bubbles:true}));
+  check(!$('dualInstallRun').disabled && !fake.opened,'serial dual-firmware install does not require gyro HID connection');
   fake.vendorId=0x1209;fake.productId=1;
   $('connect').click(); await ready(); check(!$('identityWarning').hidden,'private test identity is clearly identified');
   $('disconnect').click(); await waitFor(()=>!fake.opened&&!$('connect').disabled);

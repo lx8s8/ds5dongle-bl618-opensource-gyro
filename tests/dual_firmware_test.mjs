@@ -90,6 +90,17 @@ assert.equal(inspectDualState({
 const upSnap = makeStockFlash({ gyroApp: upstreamV1 });
 upSnap.set(text('UPST-HIST-PSM'), 0x3E9000);
 
+// A stock upstream receiver can be installed directly through serial without
+// a gyro-config connection. Its current pairing/settings bank stays in the
+// upstream slot and is copied into the initial gyro bank.
+const fromUpstream = await buildInstallImage({
+  snapshot: upSnap, manager, gyro: gyroV1, upstream: upstreamV1,
+  gyroVersion: '3.18G2.4RC4', upstreamVersion: '3.24',
+});
+assert.deepEqual(fromUpstream.after.subarray(0x330000, 0x338000), upSnap.subarray(0x3E9000, 0x3F1000));
+assert.deepEqual(fromUpstream.after.subarray(0x3E9000, 0x3F1000), upSnap.subarray(0x3E9000, 0x3F1000));
+assert.equal(fromUpstream.segments.at(-1).address, 0);
+
 const inst = await buildInstallImage({
   snapshot: stock, manager, gyro: gyroV1, upstream: upstreamV1,
   gyroVersion: 'LCT616-DS5 3.18G2.4RC4', upstreamVersion: '3.24',

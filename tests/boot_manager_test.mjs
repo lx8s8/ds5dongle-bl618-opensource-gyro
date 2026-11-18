@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {BootManager,decodeBootStatus,requestBootManager,enterManagerFromUpstream} from '../web/boot-manager.mjs';
+import {BootManager,decodeBootStatus,requestBootManager,enterManagerFromUpstream,initBootManager} from '../web/boot-manager.mjs';
 function report(){const a=new Uint8Array(64);a[0]=0x70;a.set(new TextEncoder().encode('DBMR'),1);a[5]=1;a[6]=1;a[7]=0;a[8]=3;a[12]=1;a[61]=1;return a;}
 const p=report();assert.equal(decodeBootStatus(p).valid,3);assert.equal(decodeBootStatus(p).selected,0);
 for(const offset of [0,1,5,12,61]){const b=p.slice();b[offset]^=128;assert.throws(()=>decodeBootStatus(b));}
@@ -19,4 +19,27 @@ const holdManager={...fake,opened:false,async open(){this.opened=true;},async cl
 await enterManagerFromUpstream({requestDevice:async()=>[upstream],getDevices:async()=>[holdManager]});
 assert.ok(resetSent&&holdSent);assert.equal(upstream.opened,false);assert.equal(holdManager.opened,false);
 await assert.rejects(enterManagerFromUpstream({requestDevice:async()=>[{collections:[]}]}),/不支持/);
+// Manager activity replaces stale gyro-connection notices without making the
+// serial installer depend on a gyro HID connection.
+const savedDocument=Object.getOwnPropertyDescriptor(globalThis,'document');
+const savedNavigator=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+const savedInterval=globalThis.setInterval;
+const elements=Object.fromEntries(['bootState','bootConnect','bootDisconnect','bootSlot0','bootSlot1','bootEnter','bootEnterUpstream','bootVersion0','bootVersion1'].map(id=>[id,{}]));
+const statusReport=report();
+const managerDevice={...fake,opened:false,async open(){this.opened=true;},async close(){this.opened=false;},
+ async receiveFeatureReport(){return new DataView(statusReport.buffer);},
+ async sendFeatureReport(id,data){statusReport[9]=data[0];statusReport[10]=0;statusReport[11]=data[1];}};
+try{
+ Object.defineProperty(globalThis,'document',{configurable:true,value:{getElementById:id=>elements[id]}});
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{hid:{getDevices:async()=>[managerDevice],addEventListener(){}}}});
+ globalThis.setInterval=()=>0;
+ const events=[];initBootManager({enterManager:async()=>{},onManagerActivity:state=>events.push(state)});
+ await elements.bootConnect.onclick();assert.equal(events.at(-1),'connected');
+ await elements.bootSlot1.onclick();assert.equal(events.at(-1),'upstream');
+ await elements.bootEnter.onclick();assert.equal(events.at(-1),'entering');
+} finally {
+ if(savedDocument)Object.defineProperty(globalThis,'document',savedDocument);else delete globalThis.document;
+ if(savedNavigator)Object.defineProperty(globalThis,'navigator',savedNavigator);else delete globalThis.navigator;
+ globalThis.setInterval=savedInterval;
+}
 console.log('boot manager: feature framing, strict identity, corrupt slots, ACK and cancellation passed');

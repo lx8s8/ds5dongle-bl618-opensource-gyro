@@ -290,7 +290,7 @@ $('connect').onclick = () => action(async () => {
   const candidate=await requestReceiver(navigator.hid);
   if (!candidate) return;
   const reports = candidate.collections.flatMap(c => c.featureReports || []);
-  if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('请选择接收器，并更新至支持体感配置的固件');
+  if (![CONFIG_REPORT, STATUS_REPORT, PROFILE_REPORT, DIAGNOSTIC_REPORT].every(id => reports.some(r => r.reportId === id))) throw new Error('所选设备不支持体感配置。上游固件可使用“固件与更新”中的双固件切换或串口安装，无需在此连接。');
   await candidate.open(); device = candidate; transport = new HidTransport(candidate);
   try {
     reportedProfiles = []; const config = await receive(CONFIG_REPORT); sequence = config[42]; transport.sequence = config[42]; await readAll(true); await receiverUI.load(); await macroUI.load().catch(e=>message(e.message,true)); device.addEventListener('inputreport', onInput);
@@ -309,7 +309,7 @@ async function close() {
   if (previous) { previous.removeEventListener('inputreport', onInput); if (previousTransport) await previousTransport.close(); else if (previous.opened) await previous.close(); }
   tester?.reset();
   releaseUI?.clearCurrent();
-  $('device').textContent = $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
+  $('device').textContent = '体感配置未连接'; $('firmware').textContent = '未连接'; $('connectionDot').classList.remove('on'); $('active').textContent = '等待输入'; $('currentSlot').textContent = '当前配置：—';
   $('identityWarning').hidden = true;
   $('testProfile').textContent = '配置 — · Edge —';
   ['interval', 'factory', 'calibration', 'stillness', 'stick'].forEach(id => { if ($(id)) $(id).textContent = '—'; }); for (const el of $('liveButtons').children) el.classList.remove('on'); controls();
@@ -751,7 +751,7 @@ tester=initTester({getDevice:()=>device,sendOutput:p=>transport.run(()=>device.s
 const flasher=initFlasher();
 const dualUI=initDualFirmware();
 releaseUI=initReleases({loadPackage:flasher.load,loadBootManager:dualUI.loadManagerSource,notify:text=>message(text)});
-initBootManager({enterManager:async()=>{
+initBootManager({onManagerActivity:state=>message(state==='connected'?'启动管理器已连接；上方体感配置连接与管理器连接相互独立。':state==='upstream'?'正在启动上游固件；体感配置无需连接，串口安装仍可使用。':state==='gyro'?'正在启动体感固件；重新枚举后可连接体感配置。':'正在进入启动管理器；上方体感配置连接与管理器连接相互独立。'),enterManager:async()=>{
  if(!device?.opened)throw new Error('请先连接体感接收器；运行上游原版时请用上电按键进入管理器');
  try{await transport.legacy(0xF6,4);}catch{throw new Error('当前固件或设备未提供软件进入入口；请使用上电按键。单固件设备无需此操作。');}
 }});
